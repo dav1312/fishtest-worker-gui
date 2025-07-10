@@ -7,6 +7,7 @@ import os
 import sys
 import ctypes
 import configparser
+import webbrowser
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
@@ -57,6 +58,7 @@ class FishtestManagerApp(ctk.CTk):
         self.geometry("900x650")
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
+        self.iconbitmap(get_asset_path("icon.ico"))
 
     def _create_widgets(self):
         # --- Top Control Frame ---
@@ -133,9 +135,11 @@ class FishtestManagerApp(ctk.CTk):
         else:
             self.add_log("SUCCESS: Full environment setup is complete.")
             user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
-            if user == USERNAME_DEFAULT:
+            password = self.config.get('login', 'password', fallback='')
+            if user == USERNAME_DEFAULT or not user or not password:
                 self.add_log("IMPORTANT: Before starting the worker, open the 'Settings' and enter your Fishtest username and password.")
                 self.add_log("Then click 'START WORKER'.")
+                self.after(500, self._open_settings_window)
             else:
                 self.add_log("You may now start the worker by clicking 'START WORKER'.")
 
@@ -399,7 +403,7 @@ class FishtestManagerApp(ctk.CTk):
 
     def _open_settings_window(self):
         win = ctk.CTkToplevel(self)
-        win.title("Settings"); win.geometry("400x350"); win.transient(self); win.grab_set()
+        win.title("Settings"); win.geometry("400x400"); win.transient(self); win.grab_set()
 
         ctk.CTkLabel(win, text="Fishtest Username:").pack(pady=(10,0))
         user_entry = ctk.CTkEntry(win, width=250); user_entry.pack()
@@ -428,6 +432,10 @@ class FishtestManagerApp(ctk.CTk):
             self._save_config()
             win.destroy()
         ctk.CTkButton(win, text="Save", command=save).pack(pady=20)
+
+        register_label = ctk.CTkLabel(win, text="Don't have an account? Register here!", fg_color="transparent", text_color="#33a2ff", cursor="hand2")
+        register_label.pack(pady=(0, 0))
+        register_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/signup"))
 
     def add_log(self, message):
         self.log_text.configure(state='normal')
