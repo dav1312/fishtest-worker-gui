@@ -8,6 +8,8 @@ import sys
 import ctypes
 import configparser
 import webbrowser
+import re
+import time
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
@@ -38,6 +40,10 @@ class FishtestManagerApp(ctk.CTk):
         self.worker_process = None
         self.is_long_operation_running = False
         self.config = configparser.ConfigParser()
+        self.task_total_games = 0
+        self.task_current_games = 0
+        self.task_start_time = None
+        self.is_waiting_for_new_task = True
 
         self._setup_window()
         self._create_widgets()
@@ -87,8 +93,20 @@ class FishtestManagerApp(ctk.CTk):
         self.worker_button.grid(row=0, column=0, padx=200, pady=5, sticky="ew")
         self.worker_button.bind("<Button-3>", self._force_stop_worker_event) # Right-click to force stop
 
-        self.status_label = ctk.CTkLabel(action_frame, text="STATUS: Initializing...", font=("Arial", 14))
+        self.status_label = ctk.CTkLabel(action_frame, text="Status: Initializing...", font=("Arial", 14))
         self.status_label.grid(row=1, column=0, pady=(5,0))
+
+        # --- Progress bar for worker tasks ---
+        self.task_progress_label = ctk.CTkLabel(action_frame, text="", font=("Arial", 12))
+        self.task_progress_label.grid(row=2, column=0, pady=(5,0), sticky="ew")
+
+        self.task_progress_bar = ctk.CTkProgressBar(action_frame)
+        self.task_progress_bar.grid(row=3, column=0, padx=50, pady=(5,10), sticky="ew")
+        self.task_progress_bar.set(0)
+
+        # Initially hide them until the worker starts
+        self.task_progress_label.grid_remove()
+        self.task_progress_bar.grid_remove()
 
         # --- Log Frame ---
         log_frame = ctk.CTkFrame(self)
@@ -114,7 +132,7 @@ class FishtestManagerApp(ctk.CTk):
             }
         user = self.config.get('login', 'username')
         cores = self.config.get('parameters', 'concurrency')
-        self.status_label.configure(text=f"STATUS: Idle | User: {user} | Cores: {cores}")
+        self.status_label.configure(text=f"Status: Idle | User: {user} | Cores: {cores}")
 
     def _save_config(self):
         with open(CONFIG_FILE, 'w') as configfile:
@@ -151,10 +169,10 @@ class FishtestManagerApp(ctk.CTk):
         if is_worker_running:
             for button in [self.setup_button, self.update_button, self.settings_button, self.uninstall_button]:
                 button.configure(state='disabled')
-            self.worker_button.configure(text="STOP WORKER (Graceful)", fg_color="darkred", state="normal")
+            self.worker_button.configure(text="STOP WORKER (Graceful)", fg_color="#C00000", hover_color="#A00000", state="normal")
             user = self.config.get('login', 'username')
             cores = self.config.get('parameters', 'concurrency')
-            self.status_label.configure(text=f"STATUS: Running | User: {user} | Cores: {cores}")
+            self.status_label.configure(text=f"Status: Running | User: {user} | Cores: {cores}")
             return
 
         # Case 2: A long setup/update/uninstall operation is running
@@ -311,6 +329,16 @@ class FishtestManagerApp(ctk.CTk):
     def _start_worker(self):
         self.add_log("INFO: Attempting to start the worker...")
 
+        # Reset progress state and make progress bar visible
+        self.task_total_games = 0
+        self.task_current_games = 0
+        self.task_start_time = None
+        self.task_progress_bar.set(0)
+        self.task_progress_label.configure(text="")
+        self.task_progress_label.grid()
+        self.task_progress_bar.grid()
+        self.is_waiting_for_new_task = True
+
         # The worker.py script must run from inside the WORKER_DIR.
         # The -where argument for msys2_shell.cmd takes a Windows path.
         # We quote it to handle spaces in the path.
@@ -332,8 +360,9 @@ class FishtestManagerApp(ctk.CTk):
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
             self.after(0, self._update_all_controls_state) # Update UI to "Running" state
+            # --- Process each line for progress info ---
             for line in iter(self.worker_process.stdout.readline, ''):
-                self.after(0, self.add_log, line.strip())
+                self.after(0, self._process_worker_output, line.strip())
             self.worker_process.stdout.close()
             self.worker_process.wait()
         except Exception as e:
@@ -371,14 +400,92 @@ class FishtestManagerApp(ctk.CTk):
     def _on_worker_stopped(self):
         self.add_log("INFO: Worker process has stopped.")
         self.worker_process = None
+        # --- Hide progress UI when worker stops ---
+        self.task_progress_label.grid_remove()
+        self.task_progress_bar.grid_remove()
         self._update_all_controls_state() # Update UI to "Idle" state
+
+    # --- Worker progress tracking ---
+    def _process_worker_output(self, line):
+        """Parses a line from the worker's stdout to update task progress."""
+        self.add_log(line) # Always log the line
+
+        if self.is_waiting_for_new_task:
+            # Pattern: Started game X of Y ...
+            match_total = re.search(r"^Started game \d+ of (\d+)", line)
+            if match_total:
+                self.is_waiting_for_new_task = False # Task found, stop looking for now
+                self.task_total_games = int(match_total.group(1))
+                self.task_current_games = 0 # New task, reset progress
+                self.task_start_time = time.time() # Record start time of new task
+                self._update_progress_display()
+                return # Exit early, no need to check other patterns
+
+        # Pattern: Games: N, Wins: ...
+        match_current = re.search(r"^Games: (\d+), Wins:", line)
+        if match_current:
+            self.task_current_games = int(match_current.group(1))
+            self._update_progress_display()
+            return
+
+        # Pattern: Task exited.
+        if "Task exited." in line:
+            if self.task_total_games > 0:
+                self.task_current_games = self.task_total_games
+                self._update_progress_display()
+
+            # Re-arm for the next task
+            self.is_waiting_for_new_task = True
+            self.after(2000, self._reset_progress_for_next_task)
+
+    # --- Update display logic to include ETA ---
+    def _update_progress_display(self):
+        """Updates the progress bar and label widgets based on current state, including ETA."""
+        if self.task_total_games > 0:
+            progress = self.task_current_games / self.task_total_games
+            self.task_progress_bar.set(progress)
+
+            base_text = f"Task Progress: {self.task_current_games} / {self.task_total_games}"
+            eta_text = ""
+
+            # Calculate ETA if task has started and is in progress
+            if self.task_start_time and self.task_current_games > 0 and self.task_current_games < self.task_total_games:
+                elapsed_seconds = time.time() - self.task_start_time
+                if elapsed_seconds > 1: # Avoid division by zero/erratic early values
+                    games_per_second = self.task_current_games / elapsed_seconds
+                    remaining_games = self.task_total_games - self.task_current_games
+                    remaining_seconds = remaining_games / games_per_second
+
+                    if remaining_seconds < 60:
+                        eta_text = f" (ETA: {int(remaining_seconds)}s)"
+                    else:
+                        remaining_minutes = remaining_seconds / 60
+                        eta_text = f" (ETA: {int(remaining_minutes)}m)"
+
+            elif self.task_current_games == self.task_total_games:
+                eta_text = " (Finished)"
+
+            self.task_progress_label.configure(text=base_text + eta_text)
+        else:
+            # This case is handled when the worker starts, but good to have
+            self.task_progress_bar.set(0)
+            self.task_progress_label.configure(text="")
+
+    def _reset_progress_for_next_task(self):
+        """Resets the progress display in preparation for a new task from the server."""
+        # Only reset if the worker process is still alive and we are expecting a new task
+        if self.worker_process and self.worker_process.poll() is None and self.is_waiting_for_new_task:
+            self.task_total_games = 0
+            self.task_current_games = 0
+            self.task_start_time = None
+            self._update_progress_display()
 
     # --- Threading and Utilities ---
     def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            self.after(0, self.status_label.configure, {"text": f"STATUS: {start_message.replace('---', '').strip()}..."})
+            self.after(0, self.status_label.configure, {"text": f"Status: {start_message.replace('---', '').strip()}..."})
             if start_message: self.after(0, self.add_log, start_message)
             try:
                 process = subprocess.Popen(
