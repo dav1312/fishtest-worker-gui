@@ -615,6 +615,9 @@ class FishtestManagerApp(ctk.CTk):
         register_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/signup"))
 
     def add_log(self, message):
+        # Check if user is looking at history (scrolled up)
+        is_at_bottom = self.log_text.yview()[1] == 1.0
+
         self.log_text.configure(state='normal')
 
         # Determine tag based on keywords
@@ -634,7 +637,10 @@ class FishtestManagerApp(ctk.CTk):
         self.log_text.insert(ctk.END, message + '\n', tag)
 
         self.log_text.configure(state='disabled')
-        self.log_text.yview(ctk.END)
+
+        # Only scroll down if we were already at the bottom
+        if is_at_bottom:
+            self.log_text.yview(ctk.END)
 
     def _on_closing(self):
         if self.worker_process and self.worker_process.poll() is None:
