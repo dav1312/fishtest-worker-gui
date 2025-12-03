@@ -10,9 +10,15 @@ import configparser
 import webbrowser
 import re
 import time
+import json
+import urllib.request
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
+APP_VERSION = "v1.0.3"
+REPO_OWNER = "dav1312"
+REPO_NAME = "fishtest-worker-gui"
+
 WORKER_DIR = os.path.abspath("worker")
 CONFIG_FILE = os.path.join(WORKER_DIR, "fishtest.cfg")
 MSYS2_PATH = "C:\\msys64"
@@ -51,6 +57,9 @@ class FishtestManagerApp(ctk.CTk):
         self.after(100, self._initial_environment_check)
         self.after(101, self._update_all_controls_state) # Defer check to allow window to draw
 
+        # Start update check in background
+        self.after(2000, lambda: threading.Thread(target=self._check_latest_version_thread, daemon=True).start())
+
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _is_admin(self):
@@ -60,7 +69,7 @@ class FishtestManagerApp(ctk.CTk):
             return False
 
     def _setup_window(self):
-        self.title(APP_NAME)
+        self.title(f"{APP_NAME} ({APP_VERSION})")
         self.geometry("900x650")
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
@@ -83,6 +92,13 @@ class FishtestManagerApp(ctk.CTk):
 
         self.uninstall_button = ctk.CTkButton(top_frame, text="Uninstall...", command=self._handle_uninstall_click, fg_color="#C00000", hover_color="#A00000")
         self.uninstall_button.grid(row=0, column=3, padx=5, pady=10)
+
+        # --- Update Notification Button (Hidden by default) ---
+        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!", 
+                                                command=self._open_release_page,
+                                                fg_color="#229965", hover_color="#1F7A52", text_color="white")
+        self.new_version_button.grid(row=1, column=0, columnspan=4, padx=5, pady=(0, 10), sticky="ew")
+        self.new_version_button.grid_remove()
 
         # --- Main Action Frame ---
         action_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -202,6 +218,53 @@ class FishtestManagerApp(ctk.CTk):
         else:
             self.uninstall_button.configure(text="Uninstall", state='disabled')
 
+    # --- Update Checker Logic ---
+    def _check_latest_version_thread(self):
+        """ Checks GitHub for the latest release in a background thread. """
+        url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
+        try:
+            # Create request with User-Agent to avoid some basic filtering
+            req = urllib.request.Request(url, headers={'User-Agent': APP_NAME})
+
+            # 5 second timeout to avoid hanging if network is bad
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode())
+                    latest_tag = data.get("tag_name", "")
+
+                    if latest_tag:
+                        self._compare_versions(latest_tag)
+        except urllib.error.HTTPError as e:
+            if e.code == 403:
+                self.after(0, self.add_log, "WARNING: App update check skipped (GitHub API rate limit exceeded).")
+            else:
+                self.after(0, self.add_log, f"WARNING: App update check failed (HTTP {e.code}).")
+        except Exception as e:
+            self.after(0, self.add_log, f"WARNING: App update check failed. Check your internet connection before running the worker. ({e})")
+
+    def _compare_versions(self, latest_tag):
+        def parse_version(v_str):
+            # Remove 'v', split by '.', convert to integers
+            try:
+                return tuple(map(int, v_str.lstrip('v').split('.')))
+            except ValueError:
+                return (0, 0, 0)
+
+        current = parse_version(APP_VERSION)
+        latest = parse_version(latest_tag)
+
+        if latest > current:
+            self.after(0, lambda: self._show_update_notification(latest_tag))
+        else:
+            self.after(0, self.add_log, f"INFO: You are using the latest version of the app ({APP_VERSION}).")
+
+    def _show_update_notification(self, latest_tag):
+        self.new_version_button.configure(text=f"New Version Available: {latest_tag}")
+        self.new_version_button.grid()
+        self.add_log(f"INFO: A new version of the Manager is available ({latest_tag}).")
+
+    def _open_release_page(self):
+        webbrowser.open(f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest")
 
     # --- Core Actions ---
     def _run_with_elevation(self, action_func, action_arg_name):
