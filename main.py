@@ -49,7 +49,6 @@ class FishtestManagerApp(ctk.CTk):
         self.task_total_games = 0
         self.task_current_games = 0
         self.task_start_time = None
-        self.is_waiting_for_new_task = True
 
         self._setup_window()
         self._create_widgets()
@@ -407,7 +406,6 @@ class FishtestManagerApp(ctk.CTk):
         self.task_progress_label.configure(text="")
         self.task_progress_label.grid()
         self.task_progress_bar.grid()
-        self.is_waiting_for_new_task = True
 
         # The worker.py script must run from inside the WORKER_DIR.
         # The -where argument for msys2_shell.cmd takes a Windows path.
@@ -480,33 +478,30 @@ class FishtestManagerApp(ctk.CTk):
         """Parses a line from the worker's stdout to update task progress."""
         self.add_log(line) # Always log the line
 
-        if self.is_waiting_for_new_task:
-            # Pattern: Started game X of Y ...
-            match_total = re.search(r"^Started game \d+ of (\d+)", line)
-            if match_total:
-                self.is_waiting_for_new_task = False # Task found, stop looking for now
-                self.task_total_games = int(match_total.group(1))
-                self.task_current_games = 0 # New task, reset progress
-                self.task_start_time = time.time() # Record start time of new task
-                self._update_progress_display()
-                return # Exit early, no need to check other patterns
+        # Detect Start/Total Games
+        # Pattern: Started game X of Y ...
+        match_start = re.search(r"^Started game (\d+) of (\d+)", line)
+        if match_start:
+            game_num = int(match_start.group(1))
+            total_games = int(match_start.group(2))
 
-        # Pattern: Games: N, Wins: ...
-        match_current = re.search(r"^Games: (\d+), Wins:", line)
-        if match_current:
-            self.task_current_games = int(match_current.group(1))
-            self._update_progress_display()
+            self.task_total_games = total_games
+
+            # If this is specifically Game 1, reset the timer for ETA calculation.
+            # If we resumed at Game 50, we don't reset time (or ETA would be wrong).
+            if game_num == 1:
+                self.task_current_games = 0
+                self.task_start_time = time.time()
+                self._update_progress_display()
+
             return
 
-        # Pattern: Task exited.
-        if "Task exited." in line:
-            if self.task_total_games > 0:
-                self.task_current_games = self.task_total_games
-                self._update_progress_display()
-
-            # Re-arm for the next task
-            self.is_waiting_for_new_task = True
-            self.after(2000, self._reset_progress_for_next_task)
+        # Detect Progress
+        # Pattern: Games: N, Wins: ...
+        match_progress = re.search(r"^Games: (\d+), Wins:", line)
+        if match_progress:
+            self.task_current_games = int(match_progress.group(1))
+            self._update_progress_display()
 
     # --- Update display logic to include ETA ---
     def _update_progress_display(self):
@@ -540,15 +535,6 @@ class FishtestManagerApp(ctk.CTk):
             # This case is handled when the worker starts, but good to have
             self.task_progress_bar.set(0)
             self.task_progress_label.configure(text="")
-
-    def _reset_progress_for_next_task(self):
-        """Resets the progress display in preparation for a new task from the server."""
-        # Only reset if the worker process is still alive and we are expecting a new task
-        if self.worker_process and self.worker_process.poll() is None and self.is_waiting_for_new_task:
-            self.task_total_games = 0
-            self.task_current_games = 0
-            self.task_start_time = None
-            self._update_progress_display()
 
     # --- Threading and Utilities ---
     def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None):
