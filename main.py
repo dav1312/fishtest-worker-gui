@@ -135,6 +135,13 @@ class FishtestManagerApp(ctk.CTk):
                                                           relief="flat", borderwidth=0)
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
+        # --- Color Tags ---
+        self.log_text.tag_config("INFO", foreground="#4FC1FF")    # Light Blue
+        self.log_text.tag_config("WARNING", foreground="#FFD700") # Gold/Yellow
+        self.log_text.tag_config("ERROR", foreground="#FF453A")   # Red
+        self.log_text.tag_config("SUCCESS", foreground="#32D74B") # Bright Green
+        self.log_text.tag_config("FATAL", foreground="#FF00FF")   # Magenta
+
     # --- Configuration and State Management ---
     def _load_config(self):
         self.config.read(CONFIG_FILE)
@@ -609,7 +616,23 @@ class FishtestManagerApp(ctk.CTk):
 
     def add_log(self, message):
         self.log_text.configure(state='normal')
-        self.log_text.insert(ctk.END, message + '\n')
+
+        # Determine tag based on keywords
+        tag = None
+        if "FATAL" in message:
+            tag = "FATAL"
+        elif "ERROR" in message:
+            tag = "ERROR"
+        elif "WARNING" in message:
+            tag = "WARNING"
+        elif "SUCCESS" in message:
+            tag = "SUCCESS"
+        elif "INFO" in message:
+            tag = "INFO"
+
+        # Insert text with the specific tag if found, otherwise plain
+        self.log_text.insert(ctk.END, message + '\n', tag)
+
         self.log_text.configure(state='disabled')
         self.log_text.yview(ctk.END)
 
