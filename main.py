@@ -20,7 +20,9 @@ REPO_OWNER = "dav1312"
 REPO_NAME = "fishtest-worker-gui"
 
 WORKER_DIR = os.path.abspath("worker")
-CONFIG_FILE = os.path.join(WORKER_DIR, "fishtest.cfg")
+CONFIG_FILE_NAME = "fishtest.cfg"
+CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
+EXIT_FILE_NAME = "fish.exit"
 MSYS2_PATH = "C:\\msys64"
 USERNAME_DEFAULT = "your_username"
 
@@ -157,11 +159,16 @@ class FishtestManagerApp(ctk.CTk):
         self.status_label.configure(text=f"Status: Idle | User: {user} | Cores: {cores}")
 
     def _save_config(self):
-        with open(CONFIG_FILE, 'w') as configfile:
-            self.config.write(configfile)
-        self._load_config() # Refresh the status label
-        self.add_log("INFO: Settings saved to fishtest.cfg")
-        self._handle_github_token()
+        try:
+            with open(CONFIG_FILE, 'w') as configfile:
+                self.config.write(configfile)
+            self._load_config()
+            self.add_log(f"SUCCESS: Settings saved to {CONFIG_FILE_NAME}.")
+            self._handle_github_token()
+        except PermissionError:
+            self.add_log(f"ERROR: Failed to save settings. Permission denied writing to {CONFIG_FILE}.")
+        except Exception as e:
+            self.add_log(f"ERROR: Failed to save settings due to an unexpected IO error: {e}")
 
     def _initial_environment_check(self):
         """ Log initial environment status without changing UI components. """
@@ -399,13 +406,13 @@ class FishtestManagerApp(ctk.CTk):
         self.add_log("INFO: Attempting to start the worker...")
 
         # Clean up fish.exit before starting the process
-        exit_file_path = os.path.join(WORKER_DIR, "fish.exit")
+        exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
             try:
                 os.remove(exit_file_path)
-                self.add_log(f"INFO: Cleaned up leftover fish.exit file.")
+                self.add_log(f"INFO: Cleaned up leftover {EXIT_FILE_NAME} file.")
             except Exception as e:
-                self.add_log(f"ERROR: Could not clean up leftover fish.exit file. The worker may not start correctly: {e}")
+                self.add_log(f"ERROR: Could not clean up leftover {EXIT_FILE_NAME} file. The worker may not start correctly: {e}")
 
         # Reset progress state and make progress bar visible
         self.task_total_games = 0
@@ -450,12 +457,12 @@ class FishtestManagerApp(ctk.CTk):
     def _stop_worker_gracefully(self):
         if not (self.worker_process and self.worker_process.poll() is None):
             return self.add_log("INFO: Worker is not running.")
-        self.add_log("INFO: Stopping worker gracefully... (creating fish.exit)")
+        self.add_log(f"INFO: Stopping worker gracefully... (creating {EXIT_FILE_NAME} file)")
         self.worker_button.configure(text="STOPPING...", state="disabled")
         try:
-            with open(os.path.join(WORKER_DIR, "fish.exit"), "w") as f: pass
+            with open(os.path.join(WORKER_DIR, EXIT_FILE_NAME), "w") as f: pass
         except Exception as e:
-            self.add_log(f"ERROR: Could not create fish.exit file: {e}. Consider a force stop (right-click).")
+            self.add_log(f"ERROR: Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).")
             # Re-enable button if file creation fails
             self.worker_button.configure(text="STOP WORKER (Graceful)", state="normal")
 
@@ -475,16 +482,16 @@ class FishtestManagerApp(ctk.CTk):
             self.worker_process.terminate()
 
         # Clean up the lingering fish.exit file left from the previous *graceful* attempt (if any)
-        exit_file_path = os.path.join(WORKER_DIR, "fish.exit")
+        exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
             try:
                 os.remove(exit_file_path)
-                self.add_log(f"INFO: Cleaned up leftover fish.exit file.")
+                self.add_log(f"INFO: Cleaned up leftover {EXIT_FILE_NAME} file.")
             except Exception as e:
-                self.add_log(f"ERROR: Could not clean up leftover fish.exit file: {e}")
+                self.add_log(f"ERROR: Could not clean up leftover {EXIT_FILE_NAME} file: {e}")
 
     def _on_worker_stopped(self):
-        self.add_log("INFO: Worker process has stopped.")
+        self.add_log("SUCCESS: Worker process has stopped.")
         self.worker_process = None
         # --- Hide progress UI when worker stops ---
         self.task_progress_label.grid_remove()
