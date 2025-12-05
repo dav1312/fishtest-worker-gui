@@ -398,6 +398,15 @@ class FishtestManagerApp(ctk.CTk):
     def _start_worker(self):
         self.add_log("INFO: Attempting to start the worker...")
 
+        # Clean up fish.exit before starting the process
+        exit_file_path = os.path.join(WORKER_DIR, "fish.exit")
+        if os.path.exists(exit_file_path):
+            try:
+                os.remove(exit_file_path)
+                self.add_log(f"INFO: Cleaned up leftover fish.exit file.")
+            except Exception as e:
+                self.add_log(f"ERROR: Could not clean up leftover fish.exit file. The worker may not start correctly: {e}")
+
         # Reset progress state and make progress bar visible
         self.task_total_games = 0
         self.task_current_games = 0
@@ -464,6 +473,15 @@ class FishtestManagerApp(ctk.CTk):
         except Exception as e:
             self.add_log(f"ERROR: taskkill failed: {e}. Trying basic terminate.")
             self.worker_process.terminate()
+
+        # Clean up the lingering fish.exit file left from the previous *graceful* attempt (if any)
+        exit_file_path = os.path.join(WORKER_DIR, "fish.exit")
+        if os.path.exists(exit_file_path):
+            try:
+                os.remove(exit_file_path)
+                self.add_log(f"INFO: Cleaned up leftover fish.exit file.")
+            except Exception as e:
+                self.add_log(f"ERROR: Could not clean up leftover fish.exit file: {e}")
 
     def _on_worker_stopped(self):
         self.add_log("INFO: Worker process has stopped.")
