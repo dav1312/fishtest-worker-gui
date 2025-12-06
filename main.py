@@ -95,7 +95,7 @@ class FishtestManagerApp(ctk.CTk):
         self.uninstall_button.grid(row=0, column=3, padx=5, pady=10)
 
         # --- Update Notification Button (Hidden by default) ---
-        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!", 
+        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!",
                                                 command=self._open_release_page,
                                                 fg_color="#229965", hover_color="#1F7A52", text_color="white")
         self.new_version_button.grid(row=1, column=0, columnspan=4, padx=5, pady=(0, 10), sticky="ew")
@@ -137,11 +137,14 @@ class FishtestManagerApp(ctk.CTk):
         self.log_text.grid(row=0, column=0, sticky="nsew")
 
         # --- Color Tags ---
-        self.log_text.tag_config("INFO", foreground="#4FC1FF")    # Light Blue
-        self.log_text.tag_config("WARNING", foreground="#FFD700") # Gold/Yellow
-        self.log_text.tag_config("ERROR", foreground="#FF453A")   # Red
-        self.log_text.tag_config("SUCCESS", foreground="#32D74B") # Bright Green
-        self.log_text.tag_config("FATAL", foreground="#FF00FF")   # Magenta
+        self.log_text.tag_config("INFO", foreground="#4FC1FF")      # Light Blue
+        self.log_text.tag_config("WARNING", foreground="#FFD700")   # Gold/Yellow
+        self.log_text.tag_config("ERROR", foreground="#FF453A")     # Red
+        self.log_text.tag_config("SUCCESS", foreground="#32D74B")   # Bright Green
+        self.log_text.tag_config("FATAL", foreground="#FF00FF")     # Magenta
+        self.log_text.tag_config("TIMESTAMP", foreground="#808080") # Gray
+        self.log_text.tag_config("WORKER", foreground="#DCE4EE")    # Standard Text
+        self.log_text.tag_config("CMD", foreground="#B0B0B0")       # Dimmer Text for shell output
 
     # --- Configuration and State Management ---
     def _load_config(self):
@@ -163,12 +166,12 @@ class FishtestManagerApp(ctk.CTk):
             with open(CONFIG_FILE, 'w') as configfile:
                 self.config.write(configfile)
             self._load_config()
-            self.add_log(f"SUCCESS: Settings saved to {CONFIG_FILE_NAME}.")
+            self.add_log(f"Settings saved to {CONFIG_FILE_NAME}.", level="SUCCESS")
             self._handle_github_token()
         except PermissionError:
-            self.add_log(f"ERROR: Failed to save settings. Permission denied writing to {CONFIG_FILE}.")
+            self.add_log(f"Failed to save settings. Permission denied writing to {CONFIG_FILE}.", level="ERROR")
         except Exception as e:
-            self.add_log(f"ERROR: Failed to save settings due to an unexpected IO error: {e}")
+            self.add_log(f"Failed to save settings due to an unexpected IO error: {e}", level="ERROR")
 
     def _initial_environment_check(self):
         """ Log initial environment status without changing UI components. """
@@ -176,16 +179,15 @@ class FishtestManagerApp(ctk.CTk):
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
 
         if not msys2_installed:
-            self.add_log("INFO: MSYS2 not found. Please run 'Install/Re-Install Worker'.")
+            self.add_log("MSYS2 not found. Please run 'Install/Re-Install Worker'.")
         elif not worker_installed:
-            self.add_log("INFO: MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
+            self.add_log("MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
         else:
-            self.add_log("SUCCESS: Full environment setup is complete.")
+            self.add_log("Full environment setup is complete.", level="SUCCESS")
             user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
             password = self.config.get('login', 'password', fallback='')
             if user == USERNAME_DEFAULT or not user or not password:
-                self.add_log("IMPORTANT: Before starting the worker, open the 'Settings' and enter your Fishtest username and password.")
-                self.add_log("Then click 'START WORKER'.")
+                self.add_log("Before starting the worker, open the 'Settings' and enter your Fishtest username and password. Then, click 'START WORKER'.")
                 self.after(500, self._open_settings_window)
             else:
                 self.add_log("You may now start the worker by clicking 'START WORKER'.")
@@ -249,11 +251,11 @@ class FishtestManagerApp(ctk.CTk):
                         self._compare_versions(latest_tag)
         except urllib.error.HTTPError as e:
             if e.code == 403:
-                self.after(0, self.add_log, "WARNING: App update check skipped (GitHub API rate limit exceeded).")
+                self.after(0, self.add_log, "App update check skipped (GitHub API rate limit exceeded).", "WARNING")
             else:
-                self.after(0, self.add_log, f"WARNING: App update check failed (HTTP {e.code}).")
+                self.after(0, self.add_log, f"App update check failed (HTTP {e.code}).", "WARNING")
         except Exception as e:
-            self.after(0, self.add_log, f"WARNING: App update check failed. Check your internet connection before running the worker. ({e})")
+            self.after(0, self.add_log, f"App update check failed. Check your internet connection before running the worker. ({e})", "WARNING")
 
     def _compare_versions(self, latest_tag):
         def parse_version(v_str):
@@ -269,12 +271,12 @@ class FishtestManagerApp(ctk.CTk):
         if latest > current:
             self.after(0, lambda: self._show_update_notification(latest_tag))
         else:
-            self.after(0, self.add_log, f"INFO: You are using the latest version of the app ({APP_VERSION}).")
+            self.after(0, self.add_log, f"You are using the latest version of the app ({APP_VERSION}).")
 
     def _show_update_notification(self, latest_tag):
         self.new_version_button.configure(text=f"New Version Available: {latest_tag}")
         self.new_version_button.grid()
-        self.add_log(f"INFO: A new version of the Manager is available ({latest_tag}).")
+        self.add_log(f"A new version of the Manager is available ({latest_tag}).")
 
     def _open_release_page(self):
         webbrowser.open(f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest")
@@ -391,9 +393,9 @@ class FishtestManagerApp(ctk.CTk):
                 netrc_content = f"machine api.github.com\nlogin {token}\npassword x-oauth-basic\n"
                 with open(netrc_path, "w") as f:
                     f.write(netrc_content)
-                self.add_log(f"INFO: Created/Updated '{netrc_path}' for GitHub API authentication.")
+                self.add_log(f"Created/Updated '{netrc_path}' for GitHub API authentication.")
             except Exception as e:
-                self.add_log(f"ERROR: Failed to create _netrc file: {e}")
+                self.add_log(f"Failed to create _netrc file: {e}", level="ERROR")
 
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
@@ -404,16 +406,16 @@ class FishtestManagerApp(ctk.CTk):
             self._start_worker()
 
     def _start_worker(self):
-        self.add_log("INFO: Attempting to start the worker...")
+        self.add_log("Attempting to start the worker...")
 
         # Clean up fish.exit before starting the process
         exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
             try:
                 os.remove(exit_file_path)
-                self.add_log(f"INFO: Cleaned up leftover {EXIT_FILE_NAME} file.")
+                self.add_log(f"Cleaned up leftover {EXIT_FILE_NAME} file.")
             except Exception as e:
-                self.add_log(f"ERROR: Could not clean up leftover {EXIT_FILE_NAME} file. The worker may not start correctly: {e}")
+                self.add_log(f"Could not clean up leftover {EXIT_FILE_NAME} file. The worker may not start correctly: {e}", level="ERROR")
 
         # Reset progress state and make progress bar visible
         self.task_total_games = 0
@@ -451,7 +453,7 @@ class FishtestManagerApp(ctk.CTk):
             self.worker_process.stdout.close()
             self.worker_process.wait()
         except Exception as e:
-            self.after(0, self.add_log, f"FATAL ERROR: Worker failed to start: {e}")
+            self.after(0, self.add_log, f"Worker failed to start: {e}", "FATAL")
         finally:
             self.after(0, self._on_worker_stopped)
 
@@ -459,20 +461,20 @@ class FishtestManagerApp(ctk.CTk):
         # Only return if the object is actually None
         # If the object exists but is 'dead' (Zombie), we continue anyway.
         if self.worker_process is None:
-            return self.add_log("INFO: Worker is not running.")
+            return self.add_log("Worker is not running.")
 
         # If poll() returns a value (is not None), the wrapper process is dead.
         # But since we are inside this function, self.worker_process is NOT None.
         # This is the "Zombie" state.
         if self.worker_process.poll() is not None:
-            self.add_log("WARNING: Wrapper process is dead. Attempting to stop the worker.")
+            self.add_log("Wrapper process is dead. Attempting to stop the worker.", level="WARNING")
 
-        self.add_log(f"INFO: Stopping worker gracefully... (creating {EXIT_FILE_NAME} file)")
+        self.add_log(f"Stopping worker gracefully... (creating {EXIT_FILE_NAME} file)")
         self.worker_button.configure(text="STOPPING...", state="disabled")
         try:
             with open(os.path.join(WORKER_DIR, EXIT_FILE_NAME), "w") as f: pass
         except Exception as e:
-            self.add_log(f"ERROR: Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).")
+            self.add_log(f"Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).", level="ERROR")
             # Re-enable button if file creation fails
             self.worker_button.configure(text="STOP WORKER (Graceful)", state="normal")
 
@@ -486,31 +488,31 @@ class FishtestManagerApp(ctk.CTk):
         # Check object existence only.
         # This ensures we can clean up even if the wrapper process died silently.
         if self.worker_process is None:
-            return self.add_log("INFO: Worker is not running.")
+            return self.add_log("Worker is not running.")
 
-        self.add_log("INFO: Force stopping worker...")
+        self.add_log("Force stopping worker...")
         try:
             subprocess.run(f"taskkill /F /PID {self.worker_process.pid} /T", check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
             # If the process is already dead (Zombie), taskkill will fail.
-            self.add_log(f"WARNING: taskkill failed (process might be dead): {e}")
+            self.add_log(f"taskkill failed (process might be dead): {e}", level="WARNING")
             try:
                 self.worker_process.terminate()
             except Exception as e:
                 # Log this just in case, but usually it means the process is already gone.
-                self.add_log(f"DEBUG: Internal terminate() failed (ignoring): {e}")
+                self.add_log(f"Internal terminate() failed (ignoring): {e}", level="DEBUG")
 
         # Clean up the lingering fish.exit file left from the previous *graceful* attempt (if any)
         exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
             try:
                 os.remove(exit_file_path)
-                self.add_log(f"INFO: Cleaned up leftover {EXIT_FILE_NAME} file.")
+                self.add_log(f"Cleaned up leftover {EXIT_FILE_NAME} file.")
             except Exception as e:
-                self.add_log(f"ERROR: Could not clean up leftover {EXIT_FILE_NAME} file: {e}")
+                self.add_log(f"Could not clean up leftover {EXIT_FILE_NAME} file: {e}", level="ERROR")
 
     def _on_worker_stopped(self):
-        self.add_log("SUCCESS: Worker process has stopped.")
+        self.add_log("Worker process has stopped.", level="SUCCESS")
         self.worker_process = None
         # --- Hide progress UI when worker stops ---
         self.task_progress_label.grid_remove()
@@ -520,7 +522,7 @@ class FishtestManagerApp(ctk.CTk):
     # --- Worker progress tracking ---
     def _process_worker_output(self, line):
         """Parses a line from the worker's stdout to update task progress."""
-        self.add_log(line) # Always log the line
+        self.add_log(line, level="WORKER") # Always log the line with the WORKER tag
 
         # Detect Start/Total Games
         # Pattern: Started game X of Y ...
@@ -594,15 +596,15 @@ class FishtestManagerApp(ctk.CTk):
                     creationflags=subprocess.CREATE_NO_WINDOW
                 )
                 for line in iter(process.stdout.readline, ''):
-                    self.after(0, self.add_log, line.strip())
+                    self.after(0, self.add_log, line.strip(), "CMD")
                 rc = process.wait()
                 if end_message: self.after(0, self.add_log, end_message)
                 if rc == 0:
                     if on_complete: self.after(0, on_complete)
                 else:
-                    self.after(0, self.add_log, f"ERROR: Process finished with non-zero exit code: {rc}")
+                    self.after(0, self.add_log, f"Process finished with non-zero exit code: {rc}", "ERROR")
             except Exception as e:
-                self.after(0, self.add_log, f"FATAL ERROR executing command: {e}")
+                self.after(0, self.add_log, f"executing command: {e}", "FATAL")
             finally:
                 self.is_long_operation_running = False
                 self.after(0, self._update_all_controls_state)
@@ -644,27 +646,29 @@ class FishtestManagerApp(ctk.CTk):
         register_label.pack(pady=(0, 0))
         register_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/signup"))
 
-    def add_log(self, message):
+    def add_log(self, message, level="INFO"):
         # Check if user is looking at history (scrolled up)
         is_at_bottom = self.log_text.yview()[1] == 1.0
 
         self.log_text.configure(state='normal')
 
-        # Determine tag based on keywords
-        tag = None
-        if "FATAL" in message:
-            tag = "FATAL"
-        elif "ERROR" in message:
-            tag = "ERROR"
-        elif "WARNING" in message:
-            tag = "WARNING"
-        elif "SUCCESS" in message:
-            tag = "SUCCESS"
-        elif "INFO" in message:
-            tag = "INFO"
+        timestamp = time.strftime("[%H:%M:%S]")
 
-        # Insert text with the specific tag if found, otherwise plain
-        self.log_text.insert(ctk.END, message + '\n', tag)
+        # Determine tag and format the level string
+        level_str = level.upper()
+        tag = level_str
+        # Use a fixed width for the level tag (7 characters)
+        padded_level = f"[{level_str:<7}]"
+
+        # Insert timestamp
+        self.log_text.insert(ctk.END, timestamp + " ", "TIMESTAMP")
+
+        # Insert level tag
+        self.log_text.insert(ctk.END, padded_level, tag)
+        self.log_text.insert(ctk.END, " ")
+
+        # Insert message
+        self.log_text.insert(ctk.END, message + '\n')
 
         self.log_text.configure(state='disabled')
 
