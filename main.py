@@ -5,13 +5,22 @@ import subprocess
 import threading
 import os
 import sys
-import ctypes
 import configparser
 import webbrowser
 import re
 import time
 import json
 import urllib.request
+import signal
+
+# Import the new python-based installer module
+import installer
+
+# Platform check
+IS_WINDOWS = sys.platform.startswith('win32')
+
+if IS_WINDOWS:
+    import ctypes
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
@@ -36,6 +45,7 @@ def get_asset_path(relative_path):
 
 def windows_to_msys2_path(path):
     # Converts C:\Users\... to /c/Users/...
+    # Only relevant on Windows, but kept for compatibility
     drive, rest = os.path.splitdrive(os.path.abspath(path))
     drive_letter = drive.rstrip(":\\/").lower()
     rest = rest.replace("\\", "/").lstrip("/\\")
@@ -64,17 +74,30 @@ class FishtestManagerApp(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
     def _is_admin(self):
-        try:
-            return ctypes.windll.shell32.IsUserAnAdmin()
-        except:
-            return False
+        if IS_WINDOWS:
+            try:
+                return ctypes.windll.shell32.IsUserAnAdmin()
+            except:
+                return False
+        else:
+            # On Unix, check if euid is 0
+            return os.geteuid() == 0
 
     def _setup_window(self):
         self.title(f"{APP_NAME} ({APP_VERSION})")
         self.geometry("900x650")
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(2, weight=1)
-        self.iconbitmap(get_asset_path("icon.ico"))
+
+        try:
+            if IS_WINDOWS:
+                self.iconbitmap(get_asset_path("icon.ico"))
+            else:
+                # Linux/macOS use iconphoto with a PNG
+                icon_image = tkinter.PhotoImage(file=get_asset_path("icon.png"))
+                self.iconphoto(False, icon_image)
+        except Exception as e:
+            print(f"Warning: Could not load icon: {e}")
 
     def _create_widgets(self):
         # --- Top Control Frame ---
@@ -95,7 +118,7 @@ class FishtestManagerApp(ctk.CTk):
         self.uninstall_button.grid(row=0, column=3, padx=5, pady=10)
 
         # --- Update Notification Button (Hidden by default) ---
-        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!", 
+        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!",
                                                 command=self._open_release_page,
                                                 fg_color="#229965", hover_color="#1F7A52", text_color="white")
         self.new_version_button.grid(row=1, column=0, columnspan=4, padx=5, pady=(0, 10), sticky="ew")
@@ -172,14 +195,40 @@ class FishtestManagerApp(ctk.CTk):
 
     def _initial_environment_check(self):
         """ Log initial environment status without changing UI components. """
-        msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
 
-        if not msys2_installed:
-            self.add_log("INFO: MSYS2 not found. Please run 'Install/Re-Install Worker'.")
-        elif not worker_installed:
-            self.add_log("INFO: MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
+        # Check for Build Tools on Unix
+        import shutil
+        if not IS_WINDOWS:
+            missing_tools = []
+            if not shutil.which("make"):
+                missing_tools.append("make")
+            if not shutil.which("g++") and not shutil.which("gcc"):
+                missing_tools.append("g++")
+
+            if missing_tools:
+                self.add_log("WARNING: Compiler tools missing! The worker needs these to compile Stockfish.")
+                if sys.platform == 'darwin': # macOS
+                    self.add_log("SOLUTION: Open a terminal and run: xcode-select --install")
+                else: # Linux
+                    self.add_log(f"SOLUTION: Install {', '.join(missing_tools)} using your package manager.")
+                    self.add_log("Example (Ubuntu/Debian): sudo apt install build-essential")
+                    self.add_log("Example (Fedora): sudo dnf groupinstall 'Development Tools'")
+                    self.add_log("Example (Arch): sudo pacman -S base-devel")
+
+        # Check MSYS2 only on Windows
+        msys2_installed = False
+        if IS_WINDOWS:
+            msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
+            if not msys2_installed:
+                self.add_log("INFO: MSYS2 not found. Please run 'Install/Re-Install Worker'.")
+            elif not worker_installed:
+                self.add_log("INFO: MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
         else:
+            if not worker_installed:
+                self.add_log("INFO: Worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
+
+        if worker_installed and (not IS_WINDOWS or msys2_installed):
             self.add_log("SUCCESS: Full environment setup is complete.")
             user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
             password = self.config.get('login', 'password', fallback='')
@@ -213,14 +262,25 @@ class FishtestManagerApp(ctk.CTk):
         # Case 3: App is idle
         self._load_config()  # This will refresh the status label to Idle
 
-        msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
+        msys2_installed = False
+        msys2_uninstaller_exists = False
+
+        if IS_WINDOWS:
+            msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
+            msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
+
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
         worker_dir_exists = os.path.exists(WORKER_DIR)
-        msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
 
         self.setup_button.configure(state='normal')
         self.settings_button.configure(state='normal')
-        self.update_button.configure(state='normal' if msys2_installed else 'disabled')
+
+        # MSYS2 update button is only relevant on Windows
+        if IS_WINDOWS:
+            self.update_button.configure(state='normal' if msys2_installed else 'disabled')
+        else:
+            self.update_button.configure(state='disabled')
+
         self.worker_button.configure(state='normal' if worker_installed else 'disabled',
                                      text="START WORKER", fg_color="#1F6AA5", hover_color="#144870")
 
@@ -286,52 +346,87 @@ class FishtestManagerApp(ctk.CTk):
             action_func()
         else:
             try:
-                # Use sys.argv[0] for robustness (works for .py and frozen .exe)
-                script_path = os.path.abspath(sys.argv[0])
-                # We need to pass the script path and our argument to the new elevated process
-                params = f'"{script_path}" --run-as-admin={action_arg_name}'
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-                self.destroy()  # Close the current non-admin window
+                if IS_WINDOWS:
+                    # Use sys.argv[0] for robustness (works for .py and frozen .exe)
+                    script_path = os.path.abspath(sys.argv[0])
+                    # We need to pass the script path and our argument to the new elevated process
+                    params = f'"{script_path}" --run-as-admin={action_arg_name}'
+                    ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                    self.destroy()  # Close the current non-admin window
+                else:
+                    # Unix elevation using sudo
+                    args = ['sudo', sys.executable] + sys.argv + [f'--run-as-admin={action_arg_name}']
+                    subprocess.call(args)
+                    self.destroy()
             except Exception as e:
                 tkinter.messagebox.showerror("Elevation Failed", f"Could not re-launch with admin rights: {e}")
 
     def _run_full_setup(self):
-        if not tkinter.messagebox.askyesno("Confirm Installation", "This will install the MSYS2 environment and download the fishtest worker files.\nThis may take several minutes.\n\nNote: Any existing 'worker' folder in this directory will be deleted and replaced.\n\nContinue?"):
+        if not tkinter.messagebox.askyesno("Confirm Installation", "This will download and install the fishtest worker files.\n\nNote: Any existing 'worker' folder in this directory will be deleted and replaced.\n\nContinue?"):
             return
 
-        command = f'"{get_asset_path("00_install_winget_msys2_admin.cmd")}"'
-        self._run_command_in_thread(
-            command,
-            start_message="--- Starting MSYS2 Installation ---",
-            end_message="--- MSYS2 Installation finished ---",
-            on_complete=self._install_worker_files
-        )
+        # On Windows, we still use MSYS2 for the compiler environment.
+        # Check if it exists, if not, install it using the cmd script.
+        if IS_WINDOWS:
+            msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
+            if not msys2_installed:
+                command = f'"{get_asset_path("00_install_winget_msys2_admin.cmd")}"'
+                self._run_command_in_thread(
+                    command,
+                    start_message="--- Starting MSYS2 Installation (Windows) ---",
+                    end_message="--- MSYS2 Installation finished ---",
+                    on_complete=self._install_worker_files
+                )
+                return
+
+        # If we are here, either we are on Unix, or MSYS2 is already installed.
+        # Proceed directly to Python-based worker installation.
+        self._install_worker_files()
 
     def _install_worker_files(self):
+        # We use the new pure-Python installer module here
         user = self.config.get('login', 'username')
         password = self.config.get('login', 'password')
         cores = self.config.get('parameters', 'concurrency')
 
-        # Convert the path to the install script to an MSYS2-compatible path
-        msys2_script_path = windows_to_msys2_path(get_asset_path('gui_install_worker.sh'))
-        # The script is expected to run from the app's root to create the 'worker' sub-directory.
-        app_run_dir = os.path.abspath(".")
+        # Launch the installer in a thread to keep GUI responsive
+        threading.Thread(
+            target=self._run_python_installer_thread,
+            args=(user, password, cores),
+            daemon=True
+        ).start()
 
-        # We need to escape arguments for the shell. The script path itself should be quoted
-        # with single quotes for bash to handle spaces in the MSYS2 path.
-        worker_install_cmd = f"bash '{msys2_script_path}' '{user}' '{password}' '{cores}'"
+    def _run_python_installer_thread(self, user, password, cores):
+        """ Helper thread function to run the Installer class logic """
+        self.is_long_operation_running = True
+        self.after(0, self._update_all_controls_state)
 
-        # Use -where with a quoted Windows path, which is safer than -here for paths with spaces.
-        full_command = f'"{os.path.join(MSYS2_PATH, "msys2_shell.cmd")}" -defterm -ucrt64 -no-start -where "{app_run_dir}" -c "{worker_install_cmd}"'
+        # Helper to bridge installer logs to GUI logs
+        def log_bridge(msg):
+            self.after(0, self.add_log, msg)
 
-        self._run_command_in_thread(
-            full_command,
-            start_message="--- Installing worker files and dependencies ---",
-            end_message="--- Worker installation finished ---",
-            on_complete=self._initial_environment_check
-        )
+        try:
+            # Run installation
+            inst = installer.Installer(os.path.abspath("."), log_callback=log_bridge)
+            success = inst.install(user, password, cores)
+
+            if success:
+                self.after(0, self._initial_environment_check)
+            else:
+                self.after(0, lambda: tkinter.messagebox.showerror("Error", "Installation failed. Check logs."))
+
+        except Exception as e:
+            self.after(0, self.add_log, f"FATAL ERROR during installation: {e}")
+
+        finally:
+            self.is_long_operation_running = False
+            self.after(0, self._update_all_controls_state)
 
     def _update_msys2(self):
+        if not IS_WINDOWS:
+            self.add_log("INFO: MSYS2 update is only available on Windows.")
+            return
+
         command = f'"{get_asset_path("04_update_msys2.cmd")}"'
         self._run_command_in_thread(
             command,
@@ -341,7 +436,11 @@ class FishtestManagerApp(ctk.CTk):
 
     def _handle_uninstall_click(self):
         worker_dir_exists = os.path.exists(WORKER_DIR)
-        msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
+
+        if IS_WINDOWS:
+            msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
+        else:
+            msys2_uninstaller_exists = False
 
         if worker_dir_exists:
             self._run_with_elevation(self._delete_worker_folder, 'delete_worker')
@@ -357,15 +456,32 @@ class FishtestManagerApp(ctk.CTk):
             return
 
         worker_dir_abs = os.path.abspath(WORKER_DIR)
-        command = f'if exist "{worker_dir_abs}" (echo Removing worker directory... & rd /s /q "{worker_dir_abs}") else (echo Worker directory not found.)'
 
-        self._run_command_in_thread(
-            command,
-            start_message="--- Deleting worker folder ---",
-            end_message="--- Worker folder deleted ---"
-        )
+        # Use Python generic deletion instead of shell commands
+        def delete_task():
+            self.is_long_operation_running = True
+            self.after(0, self._update_all_controls_state)
+            self.after(0, self.add_log, "--- Deleting worker folder ---")
+
+            try:
+                import shutil
+                if os.path.exists(worker_dir_abs):
+                    shutil.rmtree(worker_dir_abs)
+                    self.after(0, self.add_log, "--- Worker folder deleted ---")
+                else:
+                    self.after(0, self.add_log, "Worker directory not found.")
+            except Exception as e:
+                self.after(0, self.add_log, f"ERROR deleting folder: {e}")
+            finally:
+                self.is_long_operation_running = False
+                self.after(0, self._update_all_controls_state)
+
+        threading.Thread(target=delete_task, daemon=True).start()
 
     def _uninstall_msys2(self):
+        if not IS_WINDOWS:
+            return
+
         if not tkinter.messagebox.askyesno("Confirm Uninstallation",
                                            "WARNING: This is a destructive action.\n\n"
                                            "This will run the MSYS2 uninstaller and remove the entire MSYS2 environment.\n\n"
@@ -387,13 +503,24 @@ class FishtestManagerApp(ctk.CTk):
         if token:
             try:
                 # In Windows, the file can be .netrc or _netrc
-                netrc_path = os.path.join(os.path.expanduser("~"), "_netrc")
+                # On Unix it should be .netrc
+                filename = "_netrc" if IS_WINDOWS else ".netrc"
+                netrc_path = os.path.join(os.path.expanduser("~"), filename)
+
                 netrc_content = f"machine api.github.com\nlogin {token}\npassword x-oauth-basic\n"
+
+                # Set restrictive permissions on Unix for security
+                if not IS_WINDOWS:
+                    # Create file first if not exists to set permissions
+                    if not os.path.exists(netrc_path):
+                        open(netrc_path, 'w').close()
+                    os.chmod(netrc_path, 0o600)
+
                 with open(netrc_path, "w") as f:
                     f.write(netrc_content)
                 self.add_log(f"INFO: Created/Updated '{netrc_path}' for GitHub API authentication.")
             except Exception as e:
-                self.add_log(f"ERROR: Failed to create _netrc file: {e}")
+                self.add_log(f"ERROR: Failed to create netrc file: {e}")
 
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
@@ -424,25 +551,40 @@ class FishtestManagerApp(ctk.CTk):
         self.task_progress_label.grid()
         self.task_progress_bar.grid()
 
-        # The worker.py script must run from inside the WORKER_DIR.
-        # The -where argument for msys2_shell.cmd takes a Windows path.
-        # We quote it to handle spaces in the path.
-        worker_dir_win_path = os.path.abspath(WORKER_DIR)
+        # Platform specific python path within the venv created by installer.py
+        worker_script = os.path.join(WORKER_DIR, "worker.py")
 
-        # The command to run inside the MSYS2 shell.
-        # Since -where sets the working directory, we don't need 'cd'.
-        worker_command = "env/bin/python3 worker.py"
+        if IS_WINDOWS:
+            python_exe = os.path.join(WORKER_DIR, "env", "Scripts", "python.exe")
+        else:
+            python_exe = os.path.join(WORKER_DIR, "env", "bin", "python")
 
-        full_command = f'"{os.path.join(MSYS2_PATH, "msys2_shell.cmd")}" -defterm -ucrt64 -no-start -where "{worker_dir_win_path}" -c "{worker_command}"'
+        if not os.path.exists(python_exe):
+            self.add_log(f"ERROR: Python interpreter not found at {python_exe}. Please Re-Install Worker.")
+            return
 
-        threading.Thread(target=self._execute_worker_process, args=(full_command,), daemon=True).start()
+        # Prepare arguments as a list (safer and cross-platform)
+        cmd = [python_exe, worker_script]
+
+        threading.Thread(target=self._execute_worker_process, args=(cmd,), daemon=True).start()
 
     def _execute_worker_process(self, command):
         try:
+            # Windows specific flags to hide console window
+            creationflags = 0
+            if IS_WINDOWS:
+                creationflags = subprocess.CREATE_NO_WINDOW
+
             self.worker_process = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding='utf-8', errors='replace', shell=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                shell=False, # Use False when passing a list
+                cwd=WORKER_DIR, # Set working directory explicitly
+                creationflags=creationflags
             )
             self.after(0, self._update_all_controls_state) # Update UI to "Running" state
             # --- Process each line for progress info ---
@@ -490,10 +632,14 @@ class FishtestManagerApp(ctk.CTk):
 
         self.add_log("INFO: Force stopping worker...")
         try:
-            subprocess.run(f"taskkill /F /PID {self.worker_process.pid} /T", check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            if IS_WINDOWS:
+                subprocess.run(f"taskkill /F /PID {self.worker_process.pid} /T", check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                # Unix kill
+                os.kill(self.worker_process.pid, signal.SIGKILL)
         except Exception as e:
-            # If the process is already dead (Zombie), taskkill will fail.
-            self.add_log(f"WARNING: taskkill failed (process might be dead): {e}")
+            # If the process is already dead (Zombie), kill will fail.
+            self.add_log(f"WARNING: kill failed (process might be dead): {e}")
             try:
                 self.worker_process.terminate()
             except Exception as e:
@@ -588,10 +734,15 @@ class FishtestManagerApp(ctk.CTk):
             self.after(0, self.status_label.configure, {"text": f"Status: {start_message.replace('---', '').strip()}..."})
             if start_message: self.after(0, self.add_log, start_message)
             try:
+                # Windows specific flags for hidden window
+                creationflags = 0
+                if IS_WINDOWS:
+                    creationflags = subprocess.CREATE_NO_WINDOW
+
                 process = subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace', shell=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=creationflags
                 )
                 for line in iter(process.stdout.readline, ''):
                     self.after(0, self.add_log, line.strip())

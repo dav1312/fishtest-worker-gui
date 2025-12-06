@@ -8,7 +8,24 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            separator: ';'
+            binary_name: fishtest-worker-gui.exe
+            asset_name: fishtest-worker-gui-windows.exe
+          - os: ubuntu-latest
+            separator: ':'
+            binary_name: fishtest-worker-gui
+            asset_name: fishtest-worker-gui-linux
+          - os: macos-latest
+            separator: ':'
+            binary_name: fishtest-worker-gui
+            asset_name: fishtest-worker-gui-macos
 
     permissions:
       contents: write
@@ -22,27 +39,45 @@ jobs:
       with:
         python-version: '3.11'
 
+    # Linux specific: ensure tkinter is present so PyInstaller can bundle it
+    - name: Install Tkinter (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y python3-tk
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Build executable with PyInstaller
+    - name: Build with PyInstaller
+      shell: bash
       run: |
-        # Find the path to the customtkinter package
-        $ctk_path = python -c "import os, customtkinter; print(os.path.dirname(customtkinter.__file__))"
-        echo "CustomTkinter Path: $ctk_path"
+        # Get CustomTkinter path using python to ensure cross-platform compatibility
+        CTK_PATH=$(python -c "import os, customtkinter; print(os.path.dirname(customtkinter.__file__))")
         
-        # Run PyInstaller with all the necessary flags
-        pyinstaller --noconsole --onefile --name "fishtest-worker-gui" `
-          --icon="assets/icon.ico" `
-          --add-data "assets;assets" `
-          --add-data "$ctk_path;customtkinter" `
+        # Determine icon argument (Windows only)
+        ICON_ARG=""
+        if [ "${{ runner.os }}" == "Windows" ]; then
+          ICON_ARG="--icon=assets/icon.ico"
+        fi
+
+        # Run PyInstaller
+        # We use the matrix separator for --add-data
+        pyinstaller --noconsole --onefile --name "${{ matrix.binary_name }}" \
+          $ICON_ARG \
+          --add-data "assets${{ matrix.separator }}assets" \
+          --add-data "$CTK_PATH${{ matrix.separator }}customtkinter" \
           main.py
 
-    - name: Create GitHub Release and Upload Asset
+    - name: Rename binary for release
+      shell: bash
+      run: |
+        mv dist/${{ matrix.binary_name }} dist/${{ matrix.asset_name }}
+
+    - name: Upload Artifacts to Release
       uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/')
       with:
-        files: dist/*.exe
+        files: dist/${{ matrix.asset_name }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
