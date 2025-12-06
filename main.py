@@ -397,7 +397,8 @@ class FishtestManagerApp(ctk.CTk):
 
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
-        if self.worker_process and self.worker_process.poll() is None:
+        # Check if the object exists, rather than checking if Windows thinks it's running.
+        if self.worker_process is not None:
             self._stop_worker_gracefully()
         else:
             self._start_worker()
@@ -455,8 +456,17 @@ class FishtestManagerApp(ctk.CTk):
             self.after(0, self._on_worker_stopped)
 
     def _stop_worker_gracefully(self):
-        if not (self.worker_process and self.worker_process.poll() is None):
+        # Only return if the object is actually None
+        # If the object exists but is 'dead' (Zombie), we continue anyway.
+        if self.worker_process is None:
             return self.add_log("INFO: Worker is not running.")
+
+        # If poll() returns a value (is not None), the wrapper process is dead.
+        # But since we are inside this function, self.worker_process is NOT None.
+        # This is the "Zombie" state.
+        if self.worker_process.poll() is not None:
+            self.add_log("WARNING: Wrapper process is dead. Attempting to stop the worker.")
+
         self.add_log(f"INFO: Stopping worker gracefully... (creating {EXIT_FILE_NAME} file)")
         self.worker_button.configure(text="STOPPING...", state="disabled")
         try:
@@ -467,19 +477,28 @@ class FishtestManagerApp(ctk.CTk):
             self.worker_button.configure(text="STOP WORKER (Graceful)", state="normal")
 
     def _force_stop_worker_event(self, event):
-        if self.worker_process and self.worker_process.poll() is None:
+        # Check if the object exists, rather than checking if Windows thinks it's running.
+        if self.worker_process is not None:
             if tkinter.messagebox.askyesno("Force Stop", "Are you sure you want to force stop the worker? Current game progress may be lost."):
                 self._stop_worker_forcefully()
 
     def _stop_worker_forcefully(self):
-        if not (self.worker_process and self.worker_process.poll() is None):
+        # Check object existence only.
+        # This ensures we can clean up even if the wrapper process died silently.
+        if self.worker_process is None:
             return self.add_log("INFO: Worker is not running.")
+
         self.add_log("INFO: Force stopping worker...")
         try:
             subprocess.run(f"taskkill /F /PID {self.worker_process.pid} /T", check=True, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except Exception as e:
-            self.add_log(f"ERROR: taskkill failed: {e}. Trying basic terminate.")
-            self.worker_process.terminate()
+            # If the process is already dead (Zombie), taskkill will fail.
+            self.add_log(f"WARNING: taskkill failed (process might be dead): {e}")
+            try:
+                self.worker_process.terminate()
+            except Exception as e:
+                # Log this just in case, but usually it means the process is already gone.
+                self.add_log(f"DEBUG: Internal terminate() failed (ignoring): {e}")
 
         # Clean up the lingering fish.exit file left from the previous *graceful* attempt (if any)
         exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
