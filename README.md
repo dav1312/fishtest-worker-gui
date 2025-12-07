@@ -4,6 +4,8 @@ A user-friendly graphical interface for setting up and running a [Fishtest](http
 
 It automates the installation of MSYS2 and the Fishtest worker scripts, manages configuration, and provides real-time log feedback.
 
+![app](https://github.com/user-attachments/assets/bc10707b-2349-430b-99a4-cd88761dd851)
+
 ## Prerequisites
 
 -   Windows 10 or Windows 11.
@@ -33,7 +35,7 @@ Place the executable in a new, empty folder where you want to manage your worker
 ### 4. Running the Worker
 
 -   **To Start**: Click the large **START WORKER** button. All other controls will be disabled to prevent conflicts. The log viewer will now show the output from the Fishtest worker.
--   **To Stop Gracefully**: Click the **STOP WORKER (Graceful)** button. This creates a `fish.exit` file, which tells the worker to finish its current task and then shut down cleanly. This is the recommended way to stop the worker.
+-   **To Stop Gracefully**: Click the **STOP WORKER** button. This creates a `fish.exit` file, which tells the worker to finish its current task and then shut down cleanly. This is the recommended way to stop the worker.
 -   **To Force Stop**: If the worker is unresponsive, **right-click** the red "STOP WORKER" button. You will be asked to confirm. This immediately terminates the worker process, and any work-in-progress may be lost.
 
 ### 5. Maintenance and Uninstallation

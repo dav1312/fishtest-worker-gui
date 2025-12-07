@@ -200,7 +200,7 @@ class FishtestManagerApp(ctk.CTk):
         if is_worker_running:
             for button in [self.setup_button, self.update_button, self.settings_button, self.uninstall_button]:
                 button.configure(state='disabled')
-            self.worker_button.configure(text="STOP WORKER (Graceful)", fg_color="#C00000", hover_color="#A00000", state="normal")
+            self.worker_button.configure(text="STOP WORKER", fg_color="#C00000", hover_color="#A00000", state="normal")
             user = self.config.get('login', 'username')
             cores = self.config.get('parameters', 'concurrency')
             self.status_label.configure(text=f"Status: Running | User: {user} | Cores: {cores}")
@@ -476,7 +476,7 @@ class FishtestManagerApp(ctk.CTk):
         except Exception as e:
             self.add_log(f"Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).", level="ERROR")
             # Re-enable button if file creation fails
-            self.worker_button.configure(text="STOP WORKER (Graceful)", state="normal")
+            self.worker_button.configure(text="STOP WORKER", state="normal")
 
     def _force_stop_worker_event(self, event):
         # Check if the object exists, rather than checking if Windows thinks it's running.
