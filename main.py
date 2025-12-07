@@ -15,7 +15,7 @@ import urllib.request
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
-APP_VERSION = "v1.1.0"
+APP_VERSION = "v1.1.1"
 REPO_OWNER = "dav1312"
 REPO_NAME = "fishtest-worker-gui"
 
