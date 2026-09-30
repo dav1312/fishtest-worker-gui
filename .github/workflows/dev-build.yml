@@ -1,0 +1,53 @@
+name: Dev Build
+
+on:
+  push:
+    branches-ignore:
+      - main
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    permissions:
+      contents: read
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Build executable with PyInstaller
+      run: |
+        # Find the path to the customtkinter package
+        $ctk_path = python -c "import os, customtkinter; print(os.path.dirname(customtkinter.__file__))"
+        echo "CustomTkinter Path: $ctk_path"
+
+        pyinstaller --noconsole --onefile --name "fishtest-worker-gui" `
+          --icon="assets/icon.ico" `
+          --add-data "assets;assets" `
+          --add-data "$ctk_path;customtkinter" `
+          main.py
+
+    - name: Upload executable as workflow artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: fishtest-worker-gui-dev-${{ github.run_number }}-${{ github.sha }}
+        path: dist/fishtest-worker-gui.exe
+        retention-days: 14
+        if-no-files-found: error
