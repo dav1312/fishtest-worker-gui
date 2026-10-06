@@ -1,10 +1,13 @@
 #!/bin/bash
 # NON-INTERACTIVE fishtest worker installer for GUI use
 
-# Arguments from the GUI
-usr_name="$1"
-usr_pwd="$2"
-n_cores="$3"
+# Values from the GUI. They are passed as environment variables, not arguments,
+# so that special characters in them are never interpreted by cmd or bash.
+usr_name="$FT_USER"
+usr_pwd="$FT_PASSWORD"
+n_cores="$FT_CORES"
+# Don't pass the password on to every program this script starts
+unset FT_USER FT_PASSWORD FT_CORES
 
 echo "--- Starting non-interactive worker installation ---"
 echo "Username: $usr_name"

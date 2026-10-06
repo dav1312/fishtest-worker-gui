@@ -11,6 +11,7 @@ import webbrowser
 import re
 import time
 import json
+import netrc
 import urllib.request
 
 # --- Constants ---
@@ -25,6 +26,11 @@ CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
 EXIT_FILE_NAME = "fish.exit"
 MSYS2_PATH = "C:\\msys64"
 USERNAME_DEFAULT = "your_username"
+GITHUB_NETRC_HOST = "api.github.com"
+# Matches one "machine api.github.com ..." entry up to the next netrc entry (or end of file)
+GITHUB_NETRC_ENTRY_RE = re.compile(
+    r"(?<!\S)machine\s+api\.github\.com(?!\S).*?(?=(?<!\S)(?:machine|default|macdef)(?!\S)|\Z)",
+    re.DOTALL)
 
 def get_asset_path(relative_path):
     """ Get absolute path to asset, works for dev and for PyInstaller """
@@ -41,13 +47,54 @@ def windows_to_msys2_path(path):
     rest = rest.replace("\\", "/").lstrip("/\\")
     return f"/{drive_letter}/{rest}"
 
+def get_netrc_path():
+    """ Returns the netrc file that requests (used by the worker) will read. """
+    if os.environ.get("NETRC"):
+        return os.environ["NETRC"]
+    home = os.path.expanduser("~")
+    for name in (".netrc", "_netrc"):
+        path = os.path.join(home, name)
+        if os.path.exists(path):
+            return path
+    return os.path.join(home, "_netrc")
+
+def read_github_token():
+    """ Returns the GitHub token stored in the netrc file, or '' if there is none. """
+    try:
+        auth = netrc.netrc(get_netrc_path()).authenticators(GITHUB_NETRC_HOST)
+    except (OSError, netrc.NetrcParseError, UnicodeDecodeError):
+        return ""
+    return auth[0] if auth else ""
+
+def write_github_token(token):
+    """ Adds, replaces or (if token is empty) removes the api.github.com entry, keeping all other entries. """
+    path = get_netrc_path()
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except FileNotFoundError:
+        content = ""
+
+    content = GITHUB_NETRC_ENTRY_RE.sub("", content).rstrip()
+    if token:
+        entry = f"machine {GITHUB_NETRC_HOST}\nlogin {token}\npassword x-oauth-basic"
+        content = f"{content}\n{entry}" if content else entry
+
+    if content:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content + "\n")
+    elif os.path.exists(path):
+        os.remove(path)
+    return path
+
 class FishtestManagerApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         self.worker_process = None
         self.is_long_operation_running = False
-        self.config = configparser.ConfigParser()
+        # Same settings as the worker's own parser: '%' is a literal character and ';' starts an inline comment
+        self.config = configparser.ConfigParser(inline_comment_prefixes=";", interpolation=None)
         self.task_total_games = 0
         self.task_current_games = 0
         self.task_start_time = None
@@ -167,7 +214,6 @@ class FishtestManagerApp(ctk.CTk):
                 self.config.write(configfile)
             self._load_config()
             self.add_log(f"Settings saved to {CONFIG_FILE_NAME}.", level="SUCCESS")
-            self._handle_github_token()
         except PermissionError:
             self.add_log(f"Failed to save settings. Permission denied writing to {CONFIG_FILE}.", level="ERROR")
         except Exception as e:
@@ -292,8 +338,14 @@ class FishtestManagerApp(ctk.CTk):
                 script_path = os.path.abspath(sys.argv[0])
                 # We need to pass the script path and our argument to the new elevated process
                 params = f'"{script_path}" --run-as-admin={action_arg_name}'
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-                self.destroy()  # Close the current non-admin window
+                ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+                # ShellExecuteW returns a value greater than 32 on success
+                if ret > 32:
+                    self.destroy()  # Close the current non-admin window
+                elif ret == 5:  # SE_ERR_ACCESSDENIED, also returned when the UAC prompt is declined
+                    self.add_log("Administrator rights were not granted. The action was cancelled.", level="WARNING")
+                else:
+                    tkinter.messagebox.showerror("Elevation Failed", f"Could not re-launch with admin rights (error code {ret}).")
             except Exception as e:
                 tkinter.messagebox.showerror("Elevation Failed", f"Could not re-launch with admin rights: {e}")
 
@@ -319,18 +371,25 @@ class FishtestManagerApp(ctk.CTk):
         # The script is expected to run from the app's root to create the 'worker' sub-directory.
         app_run_dir = os.path.abspath(".")
 
-        # We need to escape arguments for the shell. The script path itself should be quoted
-        # with single quotes for bash to handle spaces in the MSYS2 path.
-        worker_install_cmd = f"bash '{msys2_script_path}' '{user}' '{password}' '{cores}'"
+        # The script path is quoted with single quotes for bash to handle spaces in the MSYS2 path.
+        # User values are NOT put in the command line: cmd and bash would interpret characters
+        # like ' " % & in them. They are passed as environment variables instead.
+        worker_install_cmd = f"bash '{msys2_script_path}'"
 
         # Use -where with a quoted Windows path, which is safer than -here for paths with spaces.
         full_command = f'"{os.path.join(MSYS2_PATH, "msys2_shell.cmd")}" -defterm -ucrt64 -no-start -where "{app_run_dir}" -c "{worker_install_cmd}"'
+
+        env = os.environ.copy()
+        env["FT_USER"] = user
+        env["FT_PASSWORD"] = password
+        env["FT_CORES"] = cores
 
         self._run_command_in_thread(
             full_command,
             start_message="--- Installing worker files and dependencies ---",
             end_message="--- Worker installation finished ---",
-            on_complete=self._initial_environment_check
+            on_complete=self._initial_environment_check,
+            env=env
         )
 
     def _update_msys2(self):
@@ -384,18 +443,18 @@ class FishtestManagerApp(ctk.CTk):
             end_message="--- MSYS2 Uninstallation finished ---"
         )
 
-    def _handle_github_token(self):
-        token = self.config.get('Fishtest', 'github_token', fallback='').strip()
-        if token:
-            try:
-                # In Windows, the file can be .netrc or _netrc
-                netrc_path = os.path.join(os.path.expanduser("~"), "_netrc")
-                netrc_content = f"machine api.github.com\nlogin {token}\npassword x-oauth-basic\n"
-                with open(netrc_path, "w") as f:
-                    f.write(netrc_content)
-                self.add_log(f"Created/Updated '{netrc_path}' for GitHub API authentication.")
-            except Exception as e:
-                self.add_log(f"Failed to create _netrc file: {e}", level="ERROR")
+    def _save_github_token(self, token):
+        # The token lives only in the netrc file: the worker deletes unknown sections from fishtest.cfg
+        if any(c.isspace() for c in token):
+            return self.add_log("GitHub token not saved: it must not contain spaces.", level="ERROR")
+        try:
+            netrc_path = write_github_token(token)
+            if token:
+                self.add_log(f"Saved GitHub token to '{netrc_path}' for GitHub API authentication.")
+            else:
+                self.add_log(f"Removed GitHub token from '{netrc_path}'.")
+        except Exception as e:
+            self.add_log(f"Failed to update the netrc file: {e}", level="ERROR")
 
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
@@ -583,17 +642,18 @@ class FishtestManagerApp(ctk.CTk):
             self.task_progress_label.configure(text="")
 
     # --- Threading and Utilities ---
-    def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None):
+    def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None, env=None):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            self.after(0, self.status_label.configure, {"text": f"Status: {start_message.replace('---', '').strip()}..."})
+            status_text = f"Status: {start_message.replace('---', '').strip()}..."
+            self.after(0, lambda: self.status_label.configure(text=status_text))
             if start_message: self.after(0, self.add_log, start_message)
             try:
                 process = subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                     text=True, encoding='utf-8', errors='replace', shell=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=subprocess.CREATE_NO_WINDOW, env=env
                 )
                 for line in iter(process.stdout.readline, ''):
                     self.after(0, self.add_log, line.strip(), "CMD")
@@ -624,21 +684,24 @@ class FishtestManagerApp(ctk.CTk):
         cores_entry = ctk.CTkEntry(win, width=250); cores_entry.pack()
 
         ctk.CTkLabel(win, text="GitHub Personal Access Token (Optional):").pack(pady=(10,0))
-        token_entry = ctk.CTkEntry(win, width=250); token_entry.pack()
+        token_entry = ctk.CTkEntry(win, show="*", width=250); token_entry.pack()
 
+        current_token = read_github_token()
         user_entry.insert(0, self.config.get('login', 'username'))
         pass_entry.insert(0, self.config.get('login', 'password'))
         cores_entry.insert(0, self.config.get('parameters', 'concurrency'))
-        token_entry.insert(0, self.config.get('Fishtest', 'github_token', fallback=''))
+        token_entry.insert(0, current_token)
 
         def save():
             self.config.set('login', 'username', user_entry.get())
             self.config.set('login', 'password', pass_entry.get())
             self.config.set('parameters', 'concurrency', cores_entry.get())
-            if not self.config.has_section('Fishtest'):
-                self.config.add_section('Fishtest')
-            self.config.set('Fishtest', 'github_token', token_entry.get())
+            # Older versions stored the token here; the worker removes this section anyway
+            self.config.remove_section('Fishtest')
             self._save_config()
+            token = token_entry.get().strip()
+            if token != current_token:
+                self._save_github_token(token)
             win.destroy()
         ctk.CTkButton(win, text="Save", command=save).pack(pady=20)
 
