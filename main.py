@@ -32,6 +32,18 @@ GITHUB_NETRC_ENTRY_RE = re.compile(
     r"(?<!\S)machine\s+api\.github\.com(?!\S).*?(?=(?<!\S)(?:machine|default|macdef)(?!\S)|\Z)",
     re.DOTALL)
 
+try:
+    OEM_CODEPAGE = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
+except Exception:
+    OEM_CODEPAGE = "cp1252"
+
+def decode_output(raw_bytes: bytes) -> str:
+    """ Decodes stdout bytes, trying UTF-8 first, falling back to the Windows console OEM code page. """
+    try:
+        return raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw_bytes.decode(OEM_CODEPAGE, errors="replace")
+
 def get_asset_path(relative_path):
     """ Get absolute path to asset, works for dev and for PyInstaller """
     try:
@@ -502,12 +514,12 @@ class FishtestManagerApp(ctk.CTk):
         try:
             self.worker_process = subprocess.Popen(
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, encoding='utf-8', errors='replace', shell=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                shell=True, creationflags=subprocess.CREATE_NO_WINDOW
             )
             self.after(0, self._update_all_controls_state) # Update UI to "Running" state
             # --- Process each line for progress info ---
-            for line in iter(self.worker_process.stdout.readline, ''):
+            for raw_line in iter(self.worker_process.stdout.readline, b''):
+                line = decode_output(raw_line)
                 self.after(0, self._process_worker_output, line.strip())
             self.worker_process.stdout.close()
             self.worker_process.wait()
@@ -652,10 +664,10 @@ class FishtestManagerApp(ctk.CTk):
             try:
                 process = subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, encoding='utf-8', errors='replace', shell=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW, env=env
+                    shell=True, creationflags=subprocess.CREATE_NO_WINDOW, env=env
                 )
-                for line in iter(process.stdout.readline, ''):
+                for raw_line in iter(process.stdout.readline, b''):
+                    line = decode_output(raw_line)
                     self.after(0, self.add_log, line.strip(), "CMD")
                 rc = process.wait()
                 if end_message: self.after(0, self.add_log, end_message)
