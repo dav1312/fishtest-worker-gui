@@ -370,8 +370,26 @@ class FishtestManagerApp(ctk.CTk):
             command,
             start_message="--- Starting MSYS2 Installation ---",
             end_message="--- MSYS2 Installation finished ---",
-            on_complete=self._install_worker_files
+            on_complete=self._install_worker_files,
+            on_error=self._prompt_manual_msys2_install
         )
+
+    def _prompt_manual_msys2_install(self):
+        self.add_log("Automated MSYS2 installation failed.", level="ERROR")
+        self.add_log("To install manually:", level="INFO")
+        self.add_log("1. Download the MSYS2 installer from https://www.msys2.org", level="INFO")
+        self.add_log("2. Install it to the DEFAULT directory: C:\\msys64", level="WARNING")
+        self.add_log("3. Once installed, click 'Install/Re-Install Worker' again.", level="INFO")
+
+        if tkinter.messagebox.askyesno(
+            "MSYS2 Installation Failed",
+            "Automated MSYS2 installation failed.\n\n"
+            "Would you like to open the official MSYS2 download page to install it manually?\n\n"
+            "IMPORTANT: When installing manually, you MUST use the default installation directory: C:\\msys64\n\n"
+            "After manual installation completes, click 'Install/Re-Install Worker' again.",
+            icon='warning'
+        ):
+            webbrowser.open("https://www.msys2.org")
 
     def _install_worker_files(self):
         user = self.config.get('login', 'username')
@@ -654,7 +672,7 @@ class FishtestManagerApp(ctk.CTk):
             self.task_progress_label.configure(text="")
 
     # --- Threading and Utilities ---
-    def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None, env=None):
+    def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None, on_error=None, env=None):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
@@ -675,8 +693,10 @@ class FishtestManagerApp(ctk.CTk):
                     if on_complete: self.after(0, on_complete)
                 else:
                     self.after(0, self.add_log, f"Process finished with non-zero exit code: {rc}", "ERROR")
+                    if on_error: self.after(0, on_error)
             except Exception as e:
                 self.after(0, self.add_log, f"executing command: {e}", "FATAL")
+                if on_error: self.after(0, on_error)
             finally:
                 self.is_long_operation_running = False
                 self.after(0, self._update_all_controls_state)
