@@ -13,7 +13,7 @@ if errorlevel 1 (
 )
 
 echo Installing MSYS2 to C:\msys64 in silent mode, it takes some time...
-start /wait "" "%TEMP%\msys2.exe" in --confirm-command --accept-messages --root C:/msys64
+start /B /wait "" "%TEMP%\msys2.exe" in --confirm-command --accept-messages --root C:/msys64
 set "INSTALL_ERR=%ERRORLEVEL%"
 del "%TEMP%\msys2.exe" 2>nul
 if %INSTALL_ERR% neq 0 (
@@ -22,7 +22,7 @@ if %INSTALL_ERR% neq 0 (
 )
 
 echo Initializing MSYS2 packages...
-C:\msys64\msys2_shell.cmd -defterm -msys2 -here -c "pacman -Syuu --noconfirm"
+C:\msys64\msys2_shell.cmd -defterm -msys2 -no-start -here -c "pacman -Syuu --noconfirm"
 if errorlevel 1 (
     echo Error: Failed to initialize MSYS2 packages.
     exit /b 1
