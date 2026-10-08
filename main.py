@@ -320,7 +320,7 @@ class FishtestManagerApp(ctk.CTk):
         self.setup_button.configure(state='normal')
         self.settings_button.configure(state='normal')
         self.update_button.configure(state='normal' if msys2_installed else 'disabled')
-        self.worker_button.configure(state='normal' if worker_installed else 'disabled',
+        self.worker_button.configure(state='normal' if worker_installed and is_msys2_ready() else 'disabled',
                                      text="START WORKER", fg_color="#1F6AA5", hover_color="#144870")
 
         if worker_dir_exists:
