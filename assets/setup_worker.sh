@@ -13,10 +13,9 @@ unset FT_USER FT_PASSWORD FT_CORES
 echo "--- Starting non-interactive worker installation ---"
 echo "Username: $usr_name"
 
-# On a reinstall n_cores may contain a string like "2 ; = 2 cores", so keep the first integer
-n_cores=$(echo "$n_cores" | grep -oE '[0-9]+' | head -n 1)
-if ! [[ "$n_cores" =~ ^[0-9]+$ ]]; then
-    echo "Invalid number of cores specified. Defaulting to 1 core."
+# Passed to the worker unchanged: it can be an expression like MAX-1, which the worker validates
+if [ -z "$n_cores" ]; then
+    echo "No concurrency specified. Defaulting to 1 core."
     n_cores=1
 fi
 echo "Cores: $n_cores"
