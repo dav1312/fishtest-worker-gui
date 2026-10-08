@@ -506,7 +506,7 @@ class FishtestManagerApp(ctk.CTk):
             if not tkinter.messagebox.askyesno("Confirm Installation", "This will install the MSYS2 environment and download the fishtest worker files.\nThis may take several minutes.\n\nNote: Any existing 'worker' folder in this directory will be deleted and replaced.\n\nContinue?"):
                 return
 
-            command = f'call "{get_asset_path("00_install_winget_msys2_admin.cmd")}"'
+            command = f'call "{get_asset_path("setup_msys2.cmd")}"'
             self._run_elevated_command(
                 command,
                 start_message="--- Starting MSYS2 Installation and Package Setup ---",
@@ -538,7 +538,7 @@ class FishtestManagerApp(ctk.CTk):
         cores = self.config.get('parameters', 'concurrency')
 
         # Convert the path to the install script to an MSYS2-compatible path
-        msys2_script_path = windows_to_msys2_path(get_asset_path('gui_install_worker.sh'))
+        msys2_script_path = windows_to_msys2_path(get_asset_path('setup_worker.sh'))
         # The script is expected to run from the app's root to create the 'worker' sub-directory.
         app_run_dir = os.path.abspath(".")
 
@@ -564,7 +564,7 @@ class FishtestManagerApp(ctk.CTk):
         )
 
     def _update_msys2(self):
-        command = f'call "{get_asset_path("04_update_msys2.cmd")}"'
+        command = f'call "{get_asset_path("update_msys2.cmd")}"'
         self._run_elevated_command(
             command,
             start_message="--- Updating MSYS2 environment ---",
