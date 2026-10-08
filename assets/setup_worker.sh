@@ -35,9 +35,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. Clean up old worker directory and any leftover temp directories from prior runs
-echo "--- Removing old worker directory and temporary files if they exist ---"
-rm -rf worker
+# 1. Clean up any leftover temp directories from prior runs
+echo "--- Removing temporary files from previous runs if they exist ---"
 rm -rf ___* 2>/dev/null || true
 
 # 2. Download and extract the fishtest worker
@@ -72,6 +71,10 @@ EOF
 # 6. Finalize installation
 echo "--- Finalizing installation ---"
 cd "$ORIG_DIR"
+# The old worker directory is only removed once the new one is ready,
+# so a failed download or setup leaves the existing installation intact
+echo "--- Replacing old worker directory ---"
+rm -rf worker
 mv "$tmp_dir/fishtest-master/worker" .
 
 echo "--- Installation complete! ---"
