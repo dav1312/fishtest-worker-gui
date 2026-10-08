@@ -96,6 +96,28 @@ def is_msys2_ready():
     """ True if MSYS2 and all the packages the worker needs are installed. """
     return all(os.path.exists(os.path.join(MSYS2_PATH, f)) for f in MSYS2_REQUIRED_FILES)
 
+def validate_concurrency(value):
+    """ Returns an error message if the concurrency is invalid, otherwise None.
+        Plain numbers get the worker's full check. Expressions only get a basic character
+        check, since evaluating them needs the worker's parser; the worker validates them. """
+    max_cores = os.cpu_count() or 1
+    if not value:
+        return "Concurrency cannot be empty."
+    if re.fullmatch(r"[0-9]+", value):
+        cores = int(value)
+        if cores < 1:
+            return "Concurrency must be at least 1."
+        # Same rule as the worker: using all cores requires writing 'MAX' explicitly
+        if cores >= max_cores:
+            if max_cores == 1:
+                return "This computer has 1 core. Use 'MAX' to use it."
+            return f"Concurrency can be at most {max_cores - 1}, or 'MAX' to use all {max_cores} cores."
+        return None
+    if (not re.fullmatch(r"[A-Za-z0-9\s.,()+\-*/]+", value) or "**" in value
+            or not set(re.findall(r"[A-Za-z_]+", value)) <= {"MAX", "min", "max"}):
+        return "Concurrency must be a number or an expression using MAX, min, max, numbers and + - * / ( )."
+    return None
+
 def get_netrc_path():
     """ Returns the netrc file that requests (used by the worker) will read. """
     if os.environ.get("NETRC"):
@@ -844,9 +866,14 @@ class FishtestManagerApp(ctk.CTk):
         token_entry.insert(0, current_token)
 
         def save():
+            cores = cores_entry.get().strip()
+            error = validate_concurrency(cores)
+            if error:
+                tkinter.messagebox.showerror("Invalid Concurrency", error, parent=win)
+                return
             self.config.set('login', 'username', user_entry.get())
             self.config.set('login', 'password', pass_entry.get())
-            self.config.set('parameters', 'concurrency', cores_entry.get())
+            self.config.set('parameters', 'concurrency', cores)
             # Older versions stored the token here; the worker removes this section anyway
             self.config.remove_section('Fishtest')
             self._save_config()
