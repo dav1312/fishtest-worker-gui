@@ -37,11 +37,11 @@ trap cleanup EXIT
 
 # 1. Clean up any leftover temp directories from prior runs
 echo "--- Removing temporary files from previous runs if they exist ---"
-rm -rf ___* 2>/dev/null || true
+rm -rf ___fishtest_tmp_* 2>/dev/null || true
 
 # 2. Download and extract the fishtest worker
 echo "--- Downloading and extracting fishtest worker ---"
-tmp_dir="___${RANDOM}"
+tmp_dir="___fishtest_tmp_${RANDOM}"
 mkdir -p "$tmp_dir"
 cd "$tmp_dir"
 wget https://github.com/official-stockfish/fishtest/archive/master.zip
