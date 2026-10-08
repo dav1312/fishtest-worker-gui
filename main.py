@@ -248,7 +248,9 @@ class FishtestManagerApp(ctk.CTk):
         sidebar.grid_columnconfigure(0, weight=1)
         sidebar.grid_rowconfigure(5, weight=1) # Pushes the bottom buttons down
 
-        ctk.CTkLabel(sidebar, text="Fishtest", font=("Arial", 15, "bold"), anchor="w").grid(row=0, column=0, padx=22, pady=(18, 14), sticky="ew")
+        fishtest_label = ctk.CTkLabel(sidebar, text="Fishtest", font=("Arial", 15, "bold"), anchor="w", cursor="hand2")
+        fishtest_label.grid(row=0, column=0, padx=22, pady=(18, 14), sticky="ew")
+        fishtest_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/tests"))
 
         self.dashboard_button = self._create_nav_button(sidebar, "Dashboard", lambda: self._show_view("dashboard"))
         self.dashboard_button.grid(row=1, column=0, padx=12, pady=2, sticky="ew")
@@ -269,8 +271,13 @@ class FishtestManagerApp(ctk.CTk):
         self.new_version_button.grid(row=6, column=0, padx=12, pady=(0, 6), sticky="ew")
         self.new_version_button.grid_remove()
 
+        issues_label = ctk.CTkLabel(sidebar, text="Report an issue on GitHub", font=("Arial", 12, "underline"),
+                                    text_color=COLOR_TEXT_MUTED, cursor="hand2")
+        issues_label.grid(row=7, column=0, padx=12, pady=(6, 4), sticky="ew")
+        issues_label.bind("<Button-1>", lambda e: webbrowser.open(f"https://github.com/{REPO_OWNER}/{REPO_NAME}/issues"))
+
         self.uninstall_button = self._create_nav_button(sidebar, "Uninstall...", self._handle_uninstall_click, text_color=COLOR_DANGER_TEXT)
-        self.uninstall_button.grid(row=7, column=0, padx=12, pady=(2, 14), sticky="ew")
+        self.uninstall_button.grid(row=8, column=0, padx=12, pady=(2, 14), sticky="ew")
 
     def _create_nav_button(self, parent, text, command, text_color=COLOR_TEXT_NAV):
         return ctk.CTkButton(parent, text=text, command=command, anchor="w", height=36, corner_radius=6,
