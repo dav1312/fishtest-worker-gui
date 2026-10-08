@@ -447,15 +447,18 @@ class FishtestManagerApp(ctk.CTk):
             read_pos = 0
 
             try:
-                # Poll process execution while tailing output to UI log
+                # Poll process execution while tailing output to UI log.
+                # The log is read as bytes and decoded per line like the non-elevated output,
+                # since programs that ignore chcp 65001 write in the OEM code page.
+                # The file is read once more after the process exits, so no output is lost.
                 while True:
                     wait_res = ctypes.windll.kernel32.WaitForSingleObject(h_process, 100)
                     if os.path.exists(log_file):
                         try:
-                            with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
+                            with open(log_file, "rb") as lf:
                                 lf.seek(read_pos)
-                                for line in lf:
-                                    stripped = line.strip()
+                                for raw_line in lf:
+                                    stripped = decode_output(raw_line).strip()
                                     if stripped:
                                         self.after(0, self.add_log, stripped, "CMD")
                                 read_pos = lf.tell()
@@ -463,18 +466,6 @@ class FishtestManagerApp(ctk.CTk):
                             pass
                     if wait_res != 0x00000102:  # WAIT_TIMEOUT is 0x102
                         break
-
-                # Final flush
-                if os.path.exists(log_file):
-                    try:
-                        with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
-                            lf.seek(read_pos)
-                            for line in lf:
-                                stripped = line.strip()
-                                if stripped:
-                                    self.after(0, self.add_log, stripped, "CMD")
-                    except Exception:
-                        pass
 
                 exit_code = wintypes.DWORD()
                 ctypes.windll.kernel32.GetExitCodeProcess(h_process, ctypes.byref(exit_code))
