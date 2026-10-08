@@ -43,6 +43,27 @@ GITHUB_NETRC_ENTRY_RE = re.compile(
     r"(?<!\S)machine\s+api\.github\.com(?!\S).*?(?=(?<!\S)(?:machine|default|macdef)(?!\S)|\Z)",
     re.DOTALL)
 
+# --- Theme ---
+COLOR_BG = "#0F1218"
+COLOR_SIDEBAR = "#0B0D12"
+COLOR_BORDER = "#222835"
+COLOR_PANEL = "#161A22"
+COLOR_INPUT_BORDER = "#2E3546"
+COLOR_TEXT = "#E9ECF2"
+COLOR_TEXT_NAV = "#C3C9D6"
+COLOR_TEXT_MUTED = "#7E8798"
+COLOR_TEXT_DISABLED = "#4A5160"
+COLOR_NAV_HOVER = "#171B24"
+COLOR_NAV_SELECTED = "#1F2638"
+COLOR_ACCENT = "#238A4F"
+COLOR_ACCENT_HOVER = "#1C7242"
+COLOR_ACCENT_DISABLED = "#1C3A2A"
+COLOR_ACCENT_TEXT = "#6FD39A"
+COLOR_DANGER = "#E5484D"
+COLOR_DANGER_HOVER = "#C93C41"
+COLOR_DANGER_TEXT = "#FF7A80"
+COLOR_STATE = {"idle": "#7E8798", "running": "#4ADE80", "busy": "#E0A93B"}
+
 SEE_MASK_NOCLOSEPROCESS = 0x00000040
 SW_HIDE = 0
 
@@ -118,6 +139,13 @@ def validate_concurrency(value):
         return "Concurrency must be a number or an expression using MAX, min, max, numbers and + - * / ( )."
     return None
 
+def concurrency_help():
+    """ One-line hint about the concurrency values this computer accepts. """
+    max_cores = os.cpu_count() or 1
+    if max_cores == 1:
+        return "This computer has 1 core. Use MAX to use it."
+    return f"This computer has {max_cores} cores. Use 1 to {max_cores - 1}, or MAX for all {max_cores}."
+
 def get_netrc_path():
     """ Returns the netrc file that requests (used by the worker) will read. """
     if os.environ.get("NETRC"):
@@ -189,70 +217,111 @@ class FishtestManagerApp(ctk.CTk):
 
     def _setup_window(self):
         self.title(f"{APP_NAME} ({APP_VERSION})")
-        self.geometry("900x650")
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.geometry("920x650")
+        self.minsize(780, 520)
+        self.configure(fg_color=COLOR_BG)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
         self.iconbitmap(get_asset_path("icon.ico"))
 
     def _create_widgets(self):
-        # --- Top Control Frame ---
-        top_frame = ctk.CTkFrame(self)
-        top_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        top_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
+        self._create_sidebar()
 
-        self.setup_button = ctk.CTkButton(top_frame, text="Install/Re-Install Worker", command=self._run_full_setup)
-        self.setup_button.grid(row=0, column=0, padx=5, pady=10)
+        # --- Main area: the dashboard and the settings page share one grid cell ---
+        main_frame = ctk.CTkFrame(self, fg_color="transparent")
+        main_frame.grid(row=0, column=1, sticky="nsew")
+        main_frame.grid_columnconfigure(0, weight=1)
+        main_frame.grid_rowconfigure(0, weight=1)
 
-        self.update_button = ctk.CTkButton(top_frame, text="Update MSYS2 Environment", command=self._update_msys2)
-        self.update_button.grid(row=0, column=1, padx=5, pady=10)
+        self.dash_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.dash_frame.grid(row=0, column=0, sticky="nsew", padx=18, pady=18)
+        self.settings_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.settings_frame.grid(row=0, column=0, sticky="nsew", padx=28, pady=22)
+        self._create_dashboard()
+        self._create_settings_page()
+        self._show_view("dashboard")
 
-        self.settings_button = ctk.CTkButton(top_frame, text="Settings", command=self._open_settings_window)
-        self.settings_button.grid(row=0, column=2, padx=5, pady=10)
+    def _create_sidebar(self):
+        sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=COLOR_SIDEBAR)
+        sidebar.grid(row=0, column=0, sticky="nsw")
+        sidebar.grid_propagate(False)
+        sidebar.grid_columnconfigure(0, weight=1)
+        sidebar.grid_rowconfigure(5, weight=1) # Pushes the bottom buttons down
 
-        self.uninstall_button = ctk.CTkButton(top_frame, text="Uninstall...", command=self._handle_uninstall_click, fg_color="#C00000", hover_color="#A00000")
-        self.uninstall_button.grid(row=0, column=3, padx=5, pady=10)
+        ctk.CTkLabel(sidebar, text="Fishtest", font=("Arial", 15, "bold"), anchor="w").grid(row=0, column=0, padx=22, pady=(18, 14), sticky="ew")
 
-        # --- Update Notification Button (Hidden by default) ---
-        self.new_version_button = ctk.CTkButton(top_frame, text="New Version Available!",
-                                                command=self._open_release_page,
-                                                fg_color="#229965", hover_color="#1F7A52", text_color="white")
-        self.new_version_button.grid(row=1, column=0, columnspan=4, padx=5, pady=(0, 10), sticky="ew")
+        self.dashboard_button = self._create_nav_button(sidebar, "Dashboard", lambda: self._show_view("dashboard"))
+        self.dashboard_button.grid(row=1, column=0, padx=12, pady=2, sticky="ew")
+        self.settings_button = self._create_nav_button(sidebar, "Settings", self._show_settings)
+        self.settings_button.grid(row=2, column=0, padx=12, pady=2, sticky="ew")
+
+        ctk.CTkFrame(sidebar, height=1, fg_color=COLOR_BORDER).grid(row=3, column=0, padx=18, pady=10, sticky="ew")
+
+        self.setup_button = self._create_nav_button(sidebar, "Install/Re-Install Worker", self._run_full_setup)
+        self.setup_button.grid(row=4, column=0, padx=12, pady=2, sticky="ew")
+        self.update_button = self._create_nav_button(sidebar, "Update MSYS2 Environment", self._update_msys2)
+        self.update_button.grid(row=5, column=0, padx=12, pady=2, sticky="new")
+
+        # Hidden by default
+        self.new_version_button = ctk.CTkButton(sidebar, text="Update available", command=self._open_release_page,
+                                                fg_color="transparent", border_width=1, border_color=COLOR_ACCENT,
+                                                text_color=COLOR_ACCENT_TEXT, hover_color=COLOR_NAV_HOVER, height=34, corner_radius=6)
+        self.new_version_button.grid(row=6, column=0, padx=12, pady=(0, 6), sticky="ew")
         self.new_version_button.grid_remove()
 
-        # --- Main Action Frame ---
-        action_frame = ctk.CTkFrame(self, fg_color="transparent")
-        action_frame.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
-        action_frame.grid_columnconfigure(0, weight=1)
+        self.uninstall_button = self._create_nav_button(sidebar, "Uninstall...", self._handle_uninstall_click, text_color=COLOR_DANGER_TEXT)
+        self.uninstall_button.grid(row=7, column=0, padx=12, pady=(2, 14), sticky="ew")
 
-        self.worker_button = ctk.CTkButton(action_frame, text="START WORKER", command=self._toggle_worker, height=50, font=("Arial", 16, "bold"))
-        self.worker_button.grid(row=0, column=0, padx=200, pady=5, sticky="ew")
-        self.worker_button.bind("<Button-3>", self._force_stop_worker_event) # Right-click to force stop
+    def _create_nav_button(self, parent, text, command, text_color=COLOR_TEXT_NAV):
+        return ctk.CTkButton(parent, text=text, command=command, anchor="w", height=36, corner_radius=6,
+                             fg_color="transparent", hover_color=COLOR_NAV_HOVER,
+                             text_color=text_color, text_color_disabled=COLOR_TEXT_DISABLED)
 
-        self.status_label = ctk.CTkLabel(action_frame, text="Status: Initializing...", font=("Arial", 14))
-        self.status_label.grid(row=1, column=0, pady=(5,0))
+    def _create_dashboard(self):
+        frame = self.dash_frame
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_rowconfigure(1, weight=1)
+
+        # --- Worker control card ---
+        card = ctk.CTkFrame(frame, corner_radius=6, fg_color=COLOR_PANEL, border_width=1, border_color=COLOR_BORDER)
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+
+        info = ctk.CTkFrame(card, fg_color="transparent")
+        info.grid(row=0, column=0, padx=(18, 10), pady=16, sticky="ew")
+        info.grid_columnconfigure(0, weight=1)
+
+        state_row = ctk.CTkFrame(info, fg_color="transparent")
+        state_row.grid(row=0, column=0, sticky="w")
+        self.state_dot = ctk.CTkLabel(state_row, text="●", font=("Arial", 14), text_color=COLOR_STATE["idle"])
+        self.state_dot.pack(side="left")
+        self.state_label = ctk.CTkLabel(state_row, text="Idle", font=("Arial", 16, "bold"))
+        self.state_label.pack(side="left", padx=(6, 0))
+        self.who_label = ctk.CTkLabel(state_row, text="", text_color=COLOR_TEXT_MUTED)
+        self.who_label.pack(side="left", padx=(8, 0))
 
         # --- Progress bar for worker tasks ---
-        self.task_progress_label = ctk.CTkLabel(action_frame, text="", font=("Arial", 12))
-        self.task_progress_label.grid(row=2, column=0, pady=(5,0), sticky="ew")
+        self.task_progress_label = ctk.CTkLabel(info, text="", font=("Arial", 12), text_color=COLOR_TEXT_MUTED, anchor="w")
+        self.task_progress_label.grid(row=1, column=0, pady=(10, 0), sticky="ew")
 
-        self.task_progress_bar = ctk.CTkProgressBar(action_frame)
-        self.task_progress_bar.grid(row=3, column=0, padx=50, pady=(5,10), sticky="ew")
+        self.task_progress_bar = ctk.CTkProgressBar(info, height=8, progress_color=COLOR_ACCENT, fg_color="#232937")
+        self.task_progress_bar.grid(row=2, column=0, pady=(4, 0), sticky="ew")
         self.task_progress_bar.set(0)
 
         # Initially hide them until the worker starts
         self.task_progress_label.grid_remove()
         self.task_progress_bar.grid_remove()
 
-        # --- Log Frame ---
-        log_frame = ctk.CTkFrame(self)
-        log_frame.grid(row=2, column=0, padx=10, pady=(0, 10), sticky="nsew")
-        log_frame.grid_rowconfigure(0, weight=1)
-        log_frame.grid_columnconfigure(0, weight=1)
+        self.worker_button = ctk.CTkButton(card, text="START WORKER", command=self._toggle_worker, width=170, height=44, corner_radius=6,
+                                           font=("Arial", 14, "bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
+        self.worker_button.grid(row=0, column=1, padx=(10, 18), pady=16)
+        self.worker_button.bind("<Button-3>", self._force_stop_worker_event) # Right-click to force stop
 
-        self.log_text = tkinter.scrolledtext.ScrolledText(log_frame, wrap=ctk.WORD, state='disabled',
-                                                          bg="#2B2B2B", fg="#DCE4EE", font=("Consolas", 10),
-                                                          relief="flat", borderwidth=0)
-        self.log_text.grid(row=0, column=0, sticky="nsew")
+        # --- Log ---
+        self.log_text = ctk.CTkTextbox(frame, wrap=ctk.WORD, state='disabled', corner_radius=6,
+                                       fg_color=COLOR_PANEL, border_width=1, border_color=COLOR_BORDER,
+                                       text_color="#D0D5E0", font=("Consolas", 12))
+        self.log_text.grid(row=1, column=0, pady=(14, 0), sticky="nsew")
 
         # --- Color Tags ---
         self.log_text.tag_config("INFO", foreground="#4FC1FF")      # Light Blue
@@ -263,6 +332,118 @@ class FishtestManagerApp(ctk.CTk):
         self.log_text.tag_config("TIMESTAMP", foreground="#808080") # Gray
         self.log_text.tag_config("WORKER", foreground="#DCE4EE")    # Standard Text
         self.log_text.tag_config("CMD", foreground="#B0B0B0")       # Dimmer Text for shell output
+
+    def _create_settings_page(self):
+        frame = self.settings_frame
+        ctk.CTkLabel(frame, text="Settings", font=("Arial", 20, "bold"), anchor="w").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(frame, text=f"Saved to worker/{CONFIG_FILE_NAME}. Changes apply the next time the worker starts.",
+                     text_color=COLOR_TEXT_MUTED, anchor="w").grid(row=1, column=0, pady=(2, 16), sticky="w")
+
+        box = ctk.CTkFrame(frame, corner_radius=6, fg_color=COLOR_PANEL, border_width=1, border_color=COLOR_BORDER)
+        box.grid(row=2, column=0, sticky="nw")
+
+        self.user_entry = self._add_settings_field(box, 0, "Fishtest username")
+        self.pass_entry = self._add_settings_field(box, 1, "Fishtest password", secret=True)
+        self.cores_entry = self._add_settings_field(box, 2, "Concurrency (cores)", help_text=concurrency_help())
+        self.token_entry = self._add_settings_field(box, 3, "GitHub personal access token (optional)", secret=True,
+                                                    help_text="Avoids GitHub API rate limits when updating.")
+
+        self.settings_error = ctk.CTkLabel(box, text="", text_color=COLOR_DANGER_TEXT, anchor="w", justify="left", wraplength=420)
+        self.settings_error.grid(row=4, column=0, padx=18, sticky="w")
+
+        buttons = ctk.CTkFrame(box, fg_color="transparent")
+        buttons.grid(row=5, column=0, padx=18, pady=(8, 18), sticky="ew")
+        ctk.CTkButton(buttons, text="Save", width=90, command=self._save_settings,
+                      fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER).pack(side="left")
+        ctk.CTkButton(buttons, text="Cancel", width=90, command=lambda: self._show_view("dashboard"), fg_color="transparent",
+                      border_width=1, border_color=COLOR_INPUT_BORDER, text_color=COLOR_TEXT_NAV,
+                      hover_color=COLOR_NAV_HOVER).pack(side="left", padx=(10, 0))
+
+        register_label = ctk.CTkLabel(buttons, text="Don't have an account? Register here!", text_color=COLOR_ACCENT_TEXT, cursor="hand2")
+        register_label.pack(side="right")
+        register_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/signup"))
+
+    def _add_settings_field(self, parent, row, label, secret=False, help_text=""):
+        field = ctk.CTkFrame(parent, fg_color="transparent")
+        field.grid(row=row, column=0, padx=18, pady=(16 if row == 0 else 12, 0), sticky="ew")
+        ctk.CTkLabel(field, text=label, font=("Arial", 12, "bold"), text_color=COLOR_TEXT_NAV, anchor="w").pack(anchor="w")
+
+        row_frame = ctk.CTkFrame(field, fg_color="transparent")
+        row_frame.pack(fill="x", pady=(4, 0))
+        entry = ctk.CTkEntry(row_frame, width=380 if secret else 440, height=34, corner_radius=6, border_width=1,
+                             fg_color=COLOR_BG, border_color=COLOR_INPUT_BORDER, show="*" if secret else "")
+        entry.pack(side="left")
+        if secret:
+            def toggle():
+                hidden = entry.cget("show") == "*"
+                entry.configure(show="" if hidden else "*")
+                show_button.configure(text="Hide" if hidden else "Show")
+            show_button = ctk.CTkButton(row_frame, text="Show", width=52, height=34, command=toggle, fg_color="transparent",
+                                        text_color=COLOR_TEXT_MUTED, hover_color=COLOR_NAV_HOVER)
+            show_button.pack(side="left", padx=(8, 0))
+
+        if help_text:
+            ctk.CTkLabel(field, text=help_text, font=("Arial", 11), text_color=COLOR_TEXT_MUTED, anchor="w",
+                         justify="left", wraplength=440).pack(anchor="w", pady=(4, 0))
+        return entry
+
+    # --- Navigation ---
+    def _show_view(self, name):
+        self.current_view = name
+        if name == "settings":
+            self.dash_frame.grid_remove()
+            self.settings_frame.grid()
+        else:
+            self.settings_frame.grid_remove()
+            self.dash_frame.grid()
+        # The selected entry gets a fill, no border
+        for button, view in ((self.dashboard_button, "dashboard"), (self.settings_button, "settings")):
+            selected = name == view
+            button.configure(fg_color=COLOR_NAV_SELECTED if selected else "transparent",
+                             hover_color=COLOR_NAV_SELECTED if selected else COLOR_NAV_HOVER,
+                             text_color="white" if selected else COLOR_TEXT_NAV)
+
+    def _show_settings(self):
+        if self.is_long_operation_running or (self.worker_process and self.worker_process.poll() is None):
+            return
+        for entry, value in ((self.user_entry, self.config.get('login', 'username')),
+                             (self.pass_entry, self.config.get('login', 'password')),
+                             (self.cores_entry, self.config.get('parameters', 'concurrency')),
+                             (self.token_entry, read_github_token())):
+            entry.delete(0, ctk.END)
+            entry.insert(0, value)
+        self._settings_token = self.token_entry.get()
+        self.settings_error.configure(text="")
+        self._show_view("settings")
+
+    def _save_settings(self):
+        cores = self.cores_entry.get().strip()
+        error = validate_concurrency(cores)
+        if error:
+            self.settings_error.configure(text=error)
+            return
+        self.config.set('login', 'username', self.user_entry.get())
+        self.config.set('login', 'password', self.pass_entry.get())
+        self.config.set('parameters', 'concurrency', cores)
+        # Older versions stored the token here; the worker removes this section anyway
+        self.config.remove_section('Fishtest')
+        self._save_config()
+        token = self.token_entry.get().strip()
+        if token != self._settings_token:
+            self._save_github_token(token)
+        self._show_view("dashboard")
+
+    def _set_state(self, text, kind="idle"):
+        """ Updates the state line of the control card. kind is one of idle, running, busy. """
+        self.state_dot.configure(text_color=COLOR_STATE[kind])
+        self.state_label.configure(text=text)
+        self.who_label.configure(text=self._who_text() if kind != "busy" else "")
+
+    def _who_text(self):
+        user = self.config.get('login', 'username')
+        cores = self.config.get('parameters', 'concurrency')
+        cores_text = f"{cores} core{'' if cores == '1' else 's'}" if cores.isdigit() else f"cores: {cores}"
+        return f"·  {user}  ·  {cores_text}"
 
     # --- Configuration and State Management ---
     def _load_config(self):
@@ -275,15 +456,13 @@ class FishtestManagerApp(ctk.CTk):
             self.config['parameters'] = {
                 'concurrency': '3'
             }
-        user = self.config.get('login', 'username')
-        cores = self.config.get('parameters', 'concurrency')
-        self.status_label.configure(text=f"Status: Idle | User: {user} | Cores: {cores}")
 
     def _save_config(self):
         try:
             with open(CONFIG_FILE, 'w') as configfile:
                 self.config.write(configfile)
             self._load_config()
+            self.who_label.configure(text=self._who_text())
             self.add_log(f"Settings saved to {CONFIG_FILE_NAME}.", level="SUCCESS")
         except PermissionError:
             self.add_log(f"Failed to save settings. Permission denied writing to {CONFIG_FILE}.", level="ERROR")
@@ -307,9 +486,14 @@ class FishtestManagerApp(ctk.CTk):
             password = self.config.get('login', 'password', fallback='')
             if user == USERNAME_DEFAULT or not user or not password:
                 self.add_log("Before starting the worker, open the 'Settings' and enter your Fishtest username and password. Then, click 'START WORKER'.")
-                self.after(500, self._open_settings_window)
+                self.after(500, self._show_settings)
             else:
                 self.add_log("You may now start the worker by clicking 'START WORKER'.")
+
+    def _leave_settings_page(self):
+        """ Settings can't be edited while something is running, so go back to the dashboard. """
+        if self.current_view == "settings":
+            self._show_view("dashboard")
 
     def _update_all_controls_state(self):
         """ Master function to set the state of all controls based on app state. """
@@ -317,22 +501,23 @@ class FishtestManagerApp(ctk.CTk):
 
         # Case 1: Worker is running
         if is_worker_running:
+            self._leave_settings_page()
             for button in [self.setup_button, self.update_button, self.settings_button, self.uninstall_button]:
                 button.configure(state='disabled')
-            self.worker_button.configure(text="STOP WORKER", fg_color="#C00000", hover_color="#A00000", state="normal")
-            user = self.config.get('login', 'username')
-            cores = self.config.get('parameters', 'concurrency')
-            self.status_label.configure(text=f"Status: Running | User: {user} | Cores: {cores}")
+            self.worker_button.configure(text="STOP WORKER", fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER, state="normal")
+            self._set_state("Running", "running")
             return
 
         # Case 2: A long setup/update/uninstall operation is running
         if self.is_long_operation_running:
+            self._leave_settings_page()
             for button in [self.setup_button, self.update_button, self.settings_button, self.uninstall_button, self.worker_button]:
                 button.configure(state='disabled')
             return
 
         # Case 3: App is idle
-        self._load_config()  # This will refresh the status label to Idle
+        self._load_config()
+        self._set_state("Idle")
 
         msys2_installed = os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd"))
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
@@ -342,8 +527,9 @@ class FishtestManagerApp(ctk.CTk):
         self.setup_button.configure(state='normal')
         self.settings_button.configure(state='normal')
         self.update_button.configure(state='normal' if msys2_installed else 'disabled')
-        self.worker_button.configure(state='normal' if worker_installed and is_msys2_ready() else 'disabled',
-                                     text="START WORKER", fg_color="#1F6AA5", hover_color="#144870")
+        can_start = worker_installed and is_msys2_ready()
+        self.worker_button.configure(state='normal' if can_start else 'disabled', text="START WORKER",
+                                     fg_color=COLOR_ACCENT if can_start else COLOR_ACCENT_DISABLED, hover_color=COLOR_ACCENT_HOVER)
 
         if worker_dir_exists:
             self.uninstall_button.configure(text="Delete Worker Folder", state='normal')
@@ -391,7 +577,7 @@ class FishtestManagerApp(ctk.CTk):
             self.after(0, self.add_log, f"You are using the latest version of the app ({APP_VERSION}).")
 
     def _show_update_notification(self, latest_tag):
-        self.new_version_button.configure(text=f"New Version Available: {latest_tag}")
+        self.new_version_button.configure(text=f"Update available: {latest_tag}")
         self.new_version_button.grid()
         self.add_log(f"A new version of the Manager is available ({latest_tag}).")
 
@@ -415,8 +601,7 @@ class FishtestManagerApp(ctk.CTk):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            status_text = f"Status: {start_message}..."
-            self.after(0, lambda: self.status_label.configure(text=status_text))
+            self.after(0, self._set_state, f"{start_message}..." if start_message else "Working...", "busy")
             if start_message:
                 self.after(0, self.add_log, start_message)
 
@@ -816,8 +1001,7 @@ class FishtestManagerApp(ctk.CTk):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            status_text = f"Status: {start_message}..."
-            self.after(0, lambda: self.status_label.configure(text=status_text))
+            self.after(0, self._set_state, f"{start_message}..." if start_message else "Working...", "busy")
             if start_message: self.after(0, self.add_log, start_message)
             try:
                 process = subprocess.Popen(
@@ -841,50 +1025,6 @@ class FishtestManagerApp(ctk.CTk):
                 self.is_long_operation_running = False
                 self.after(0, self._update_all_controls_state)
         threading.Thread(target=run, daemon=True).start()
-
-    def _open_settings_window(self):
-        win = ctk.CTkToplevel(self)
-        win.title("Settings"); win.geometry("400x400"); win.transient(self); win.grab_set()
-
-        ctk.CTkLabel(win, text="Fishtest Username:").pack(pady=(10,0))
-        user_entry = ctk.CTkEntry(win, width=250); user_entry.pack()
-
-        ctk.CTkLabel(win, text="Fishtest Password:").pack(pady=(10,0))
-        pass_entry = ctk.CTkEntry(win, show="*", width=250); pass_entry.pack()
-
-        ctk.CTkLabel(win, text="Concurrency (Cores):").pack(pady=(10,0))
-        cores_entry = ctk.CTkEntry(win, width=250); cores_entry.pack()
-
-        ctk.CTkLabel(win, text="GitHub Personal Access Token (Optional):").pack(pady=(10,0))
-        token_entry = ctk.CTkEntry(win, show="*", width=250); token_entry.pack()
-
-        current_token = read_github_token()
-        user_entry.insert(0, self.config.get('login', 'username'))
-        pass_entry.insert(0, self.config.get('login', 'password'))
-        cores_entry.insert(0, self.config.get('parameters', 'concurrency'))
-        token_entry.insert(0, current_token)
-
-        def save():
-            cores = cores_entry.get().strip()
-            error = validate_concurrency(cores)
-            if error:
-                tkinter.messagebox.showerror("Invalid Concurrency", error, parent=win)
-                return
-            self.config.set('login', 'username', user_entry.get())
-            self.config.set('login', 'password', pass_entry.get())
-            self.config.set('parameters', 'concurrency', cores)
-            # Older versions stored the token here; the worker removes this section anyway
-            self.config.remove_section('Fishtest')
-            self._save_config()
-            token = token_entry.get().strip()
-            if token != current_token:
-                self._save_github_token(token)
-            win.destroy()
-        ctk.CTkButton(win, text="Save", command=save).pack(pady=20)
-
-        register_label = ctk.CTkLabel(win, text="Don't have an account? Register here!", fg_color="transparent", text_color="#33a2ff", cursor="hand2")
-        register_label.pack(pady=(0, 0))
-        register_label.bind("<Button-1>", lambda e: webbrowser.open("https://tests.stockfishchess.org/signup"))
 
     def add_log(self, message, level="INFO"):
         # Check if user is looking at history (scrolled up)
