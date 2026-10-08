@@ -27,6 +27,15 @@ CONFIG_FILE_NAME = "fishtest.cfg"
 CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
 EXIT_FILE_NAME = "fish.exit"
 MSYS2_PATH = "C:\\msys64"
+# Files that must exist for MSYS2 and the packages installed by setup_msys2.cmd to be usable
+MSYS2_REQUIRED_FILES = (
+    "msys2_shell.cmd",
+    os.path.join("usr", "bin", "wget.exe"),
+    os.path.join("usr", "bin", "unzip.exe"),
+    os.path.join("usr", "bin", "make.exe"),
+    os.path.join("ucrt64", "bin", "gcc.exe"),
+    os.path.join("ucrt64", "bin", "python3.exe"),
+)
 USERNAME_DEFAULT = "your_username"
 GITHUB_NETRC_HOST = "api.github.com"
 # Matches one "machine api.github.com ..." entry up to the next netrc entry (or end of file)
@@ -495,11 +504,7 @@ class FishtestManagerApp(ctk.CTk):
         threading.Thread(target=run, daemon=True).start()
 
     def _run_full_setup(self):
-        msys2_ready = (
-            os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd")) and
-            os.path.exists(os.path.join(MSYS2_PATH, "ucrt64", "bin", "python3.exe")) and
-            os.path.exists(os.path.join(MSYS2_PATH, "usr", "bin", "unzip.exe"))
-        )
+        msys2_ready = all(os.path.exists(os.path.join(MSYS2_PATH, f)) for f in MSYS2_REQUIRED_FILES)
 
         if msys2_ready:
             if not tkinter.messagebox.askyesno("Confirm Worker Setup", "MSYS2 environment is already installed.\n\nThis will download and set up the fishtest worker files in this directory.\n\nNote: Any existing 'worker' folder will be deleted and replaced.\n\nContinue?"):
