@@ -192,6 +192,7 @@ class FishtestManagerApp(ctk.CTk):
 
         self.worker_process = None
         self.is_long_operation_running = False
+        self.is_stopping_gracefully = False
         # Same settings as the worker's own parser: '%' is a literal character and ';' starts an inline comment
         self.config = configparser.ConfigParser(inline_comment_prefixes=";", interpolation=None)
         self.task_total_games = 0
@@ -511,8 +512,12 @@ class FishtestManagerApp(ctk.CTk):
             self._leave_settings_page()
             for button in [self.setup_button, self.update_button, self.settings_button, self.uninstall_button]:
                 button.configure(state='disabled')
-            self.worker_button.configure(text="STOP WORKER", fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER, state="normal")
-            self._set_state("Running", "running")
+            if self.is_stopping_gracefully:
+                self.worker_button.configure(text="FORCE STOP NOW", fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER, state="normal")
+                self._set_state("Stopping...", "busy")
+            else:
+                self.worker_button.configure(text="STOP WORKER", fg_color=COLOR_DANGER, hover_color=COLOR_DANGER_HOVER, state="normal")
+                self._set_state("Running", "running")
             return
 
         # Case 2: A long setup/update/uninstall operation is running
@@ -839,12 +844,16 @@ class FishtestManagerApp(ctk.CTk):
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
         if self.worker_process is not None:
-            self._stop_worker_gracefully()
+            if self.is_stopping_gracefully:
+                self._confirm_and_force_stop()
+            else:
+                self._stop_worker_gracefully()
         else:
             self._start_worker()
 
     def _start_worker(self):
         self.add_log("Attempting to start the worker...")
+        self.is_stopping_gracefully = False
 
         exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
@@ -895,18 +904,28 @@ class FishtestManagerApp(ctk.CTk):
         if self.worker_process.poll() is not None:
             self.add_log("Wrapper process is dead. Attempting to stop the worker.", level="WARNING")
 
-        self.add_log(f"Stopping worker gracefully... (creating {EXIT_FILE_NAME} file)")
-        self.worker_button.configure(text="STOPPING...", state="disabled")
+        exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         try:
-            with open(os.path.join(WORKER_DIR, EXIT_FILE_NAME), "w") as f: pass
+            with open(exit_file_path, "w") as f:
+                pass
+            self.is_stopping_gracefully = True
+            self.add_log("Graceful stop requested.", level="INFO")
+            self.add_log("The worker will finish its current batch of games to safely save results. This may take several minutes.", level="INFO")
+            self.add_log("To stop immediately without saving the in-flight batch, click 'FORCE STOP NOW'.", level="INFO")
+            self._update_all_controls_state()
+            self._update_progress_display()
         except Exception as e:
-            self.add_log(f"Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).", level="ERROR")
-            self.worker_button.configure(text="STOP WORKER", state="normal")
+            self.add_log(f"Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop.", level="ERROR")
+            self.is_stopping_gracefully = False
+            self._update_all_controls_state()
 
-    def _force_stop_worker_event(self, event):
+    def _confirm_and_force_stop(self):
         if self.worker_process is not None:
-            if tkinter.messagebox.askyesno("Force Stop", "Are you sure you want to force stop the worker? Current game progress may be lost."):
+            if tkinter.messagebox.askyesno("Force Stop", "Are you sure you want to force stop the worker?\n\nIn-progress batch results will be lost."):
                 self._stop_worker_forcefully()
+
+    def _force_stop_worker_event(self, event=None):
+        self._confirm_and_force_stop()
 
     def _stop_worker_forcefully(self):
         # Check the object rather than poll(), so we can clean up even if the wrapper process died silently
@@ -937,6 +956,7 @@ class FishtestManagerApp(ctk.CTk):
     def _on_worker_stopped(self):
         self.add_log("Worker process has stopped.", level="SUCCESS")
         self.worker_process = None
+        self.is_stopping_gracefully = False
         self.task_progress_label.grid_remove()
         self.task_progress_bar.grid_remove()
         self._update_all_controls_state()
@@ -996,6 +1016,9 @@ class FishtestManagerApp(ctk.CTk):
 
             elif self.task_current_games == self.task_total_games:
                 eta_text = " (Finished)"
+
+            if self.is_stopping_gracefully:
+                eta_text += " • Stopping after batch"
 
             self.task_progress_label.configure(text=base_text + eta_text)
         else:
