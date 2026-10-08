@@ -92,6 +92,10 @@ def windows_to_msys2_path(path):
     rest = rest.replace("\\", "/").lstrip("/\\")
     return f"/{drive_letter}/{rest}"
 
+def is_msys2_ready():
+    """ True if MSYS2 and all the packages the worker needs are installed. """
+    return all(os.path.exists(os.path.join(MSYS2_PATH, f)) for f in MSYS2_REQUIRED_FILES)
+
 def get_netrc_path():
     """ Returns the netrc file that requests (used by the worker) will read. """
     if os.environ.get("NETRC"):
@@ -271,6 +275,8 @@ class FishtestManagerApp(ctk.CTk):
 
         if not msys2_installed:
             self.add_log("MSYS2 not found. Please run 'Install/Re-Install Worker'.")
+        elif not is_msys2_ready():
+            self.add_log("MSYS2 found, but required packages are missing. Run 'Install/Re-Install Worker' to install them.")
         elif not worker_installed:
             self.add_log("MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
         else:
@@ -495,9 +501,7 @@ class FishtestManagerApp(ctk.CTk):
         threading.Thread(target=run, daemon=True).start()
 
     def _run_full_setup(self):
-        msys2_ready = all(os.path.exists(os.path.join(MSYS2_PATH, f)) for f in MSYS2_REQUIRED_FILES)
-
-        if msys2_ready:
+        if is_msys2_ready():
             if not tkinter.messagebox.askyesno("Confirm Worker Setup", "MSYS2 environment is already installed.\n\nThis will download and set up the fishtest worker files in this directory.\n\nNote: Any existing 'worker' folder will be deleted and replaced.\n\nContinue?"):
                 return
             self._install_worker_files()
