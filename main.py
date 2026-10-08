@@ -415,7 +415,7 @@ class FishtestManagerApp(ctk.CTk):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            status_text = f"Status: {start_message.replace('---', '').strip()}..."
+            status_text = f"Status: {start_message}..."
             self.after(0, lambda: self.status_label.configure(text=status_text))
             if start_message:
                 self.after(0, self.add_log, start_message)
@@ -528,8 +528,8 @@ class FishtestManagerApp(ctk.CTk):
             command = f'call "{get_asset_path("setup_msys2.cmd")}"'
             self._run_elevated_command(
                 command,
-                start_message="--- Starting MSYS2 Installation and Package Setup ---",
-                end_message="--- MSYS2 Installation and Package Setup finished ---",
+                start_message="Starting MSYS2 Installation and Package Setup",
+                end_message="MSYS2 Installation and Package Setup finished",
                 on_complete=self._install_worker_files,
                 on_error=self._prompt_manual_msys2_install
             )
@@ -575,8 +575,8 @@ class FishtestManagerApp(ctk.CTk):
 
         self._run_command_in_thread(
             full_command,
-            start_message="--- Installing worker files and dependencies ---",
-            end_message="--- Worker installation finished ---",
+            start_message="Installing worker files and dependencies",
+            end_message="Worker installation finished",
             on_complete=self._initial_environment_check,
             env=env
         )
@@ -585,8 +585,8 @@ class FishtestManagerApp(ctk.CTk):
         command = f'call "{get_asset_path("update_msys2.cmd")}"'
         self._run_elevated_command(
             command,
-            start_message="--- Updating MSYS2 environment ---",
-            end_message="--- MSYS2 Update finished ---"
+            start_message="Updating MSYS2 environment",
+            end_message="MSYS2 Update finished"
         )
 
     def _handle_uninstall_click(self):
@@ -611,8 +611,8 @@ class FishtestManagerApp(ctk.CTk):
 
         self._run_command_in_thread(
             command,
-            start_message="--- Deleting worker folder ---",
-            end_message="--- Worker folder deleted ---"
+            start_message="Deleting worker folder",
+            end_message="Worker folder deleted"
         )
 
     def _uninstall_msys2(self):
@@ -628,8 +628,8 @@ class FishtestManagerApp(ctk.CTk):
 
         self._run_elevated_command(
             command,
-            start_message="--- Starting MSYS2 Uninstallation ---",
-            end_message="--- MSYS2 Uninstallation finished ---"
+            start_message="Uninstalling MSYS2, this may take a few minutes",
+            end_message="MSYS2 Uninstallation finished"
         )
 
     def _save_github_token(self, token):
@@ -817,7 +817,7 @@ class FishtestManagerApp(ctk.CTk):
         def run():
             self.is_long_operation_running = True
             self.after(0, self._update_all_controls_state)
-            status_text = f"Status: {start_message.replace('---', '').strip()}..."
+            status_text = f"Status: {start_message}..."
             self.after(0, lambda: self.status_label.configure(text=status_text))
             if start_message: self.after(0, self.add_log, start_message)
             try:
