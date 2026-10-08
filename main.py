@@ -413,9 +413,12 @@ class FishtestManagerApp(ctk.CTk):
             sei.lpDirectory = os.path.abspath(".")
             sei.nShow = SW_HIDE
 
-            success = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
+            # use_last_error makes ctypes save the error right after the call,
+            # before the interpreter can overwrite it
+            shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+            success = shell32.ShellExecuteExW(ctypes.byref(sei))
             if not success or not sei.hProcess:
-                err = ctypes.windll.kernel32.GetLastError()
+                err = ctypes.get_last_error()
                 if err == 1223:  # ERROR_CANCELLED (user clicked "No" on UAC)
                     self.after(0, self.add_log, "Administrator rights were not granted. The action was cancelled.", "WARNING")
                 else:
