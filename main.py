@@ -6,6 +6,7 @@ import threading
 import os
 import sys
 import ctypes
+from ctypes import wintypes
 import configparser
 import webbrowser
 import re
@@ -13,6 +14,7 @@ import time
 import json
 import netrc
 import urllib.request
+import tempfile
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
@@ -31,6 +33,28 @@ GITHUB_NETRC_HOST = "api.github.com"
 GITHUB_NETRC_ENTRY_RE = re.compile(
     r"(?<!\S)machine\s+api\.github\.com(?!\S).*?(?=(?<!\S)(?:machine|default|macdef)(?!\S)|\Z)",
     re.DOTALL)
+
+SEE_MASK_NOCLOSEPROCESS = 0x00000040
+SW_HIDE = 0
+
+class SHELLEXECUTEINFOW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("fMask", wintypes.ULONG),
+        ("hwnd", wintypes.HWND),
+        ("lpVerb", wintypes.LPCWSTR),
+        ("lpFile", wintypes.LPCWSTR),
+        ("lpParameters", wintypes.LPCWSTR),
+        ("lpDirectory", wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", wintypes.HINSTANCE),
+        ("lpIDList", wintypes.LPVOID),
+        ("lpClass", wintypes.LPCWSTR),
+        ("hkeyClass", wintypes.HKEY),
+        ("dwHotKey", wintypes.DWORD),
+        ("hIconOrMonitor", wintypes.HANDLE),
+        ("hProcess", wintypes.HANDLE),
+    ]
 
 try:
     OEM_CODEPAGE = f"cp{ctypes.windll.kernel32.GetOEMCP()}"
@@ -141,10 +165,10 @@ class FishtestManagerApp(ctk.CTk):
         top_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         top_frame.grid_columnconfigure((0, 1, 2, 3), weight=1)
 
-        self.setup_button = ctk.CTkButton(top_frame, text="Install/Re-Install Worker", command=lambda: self._run_with_elevation(self._run_full_setup, 'install'))
+        self.setup_button = ctk.CTkButton(top_frame, text="Install/Re-Install Worker", command=self._run_full_setup)
         self.setup_button.grid(row=0, column=0, padx=5, pady=10)
 
-        self.update_button = ctk.CTkButton(top_frame, text="Update MSYS2 Environment", command=lambda: self._run_with_elevation(self._update_msys2, 'update'))
+        self.update_button = ctk.CTkButton(top_frame, text="Update MSYS2 Environment", command=self._update_msys2)
         self.update_button.grid(row=0, column=1, padx=5, pady=10)
 
         self.settings_button = ctk.CTkButton(top_frame, text="Settings", command=self._open_settings_window)
@@ -340,45 +364,162 @@ class FishtestManagerApp(ctk.CTk):
         webbrowser.open(f"https://github.com/{REPO_OWNER}/{REPO_NAME}/releases/latest")
 
     # --- Core Actions ---
-    def _run_with_elevation(self, action_func, action_arg_name):
-        """ Checks for admin rights. If not present, re-launches the app with elevation. If present, runs the action. """
+    def _run_elevated_command(self, command, start_message="", end_message="", on_complete=None, on_error=None):
+        """ Runs an elevated command via ShellExecuteExW without elevating the main GUI process.
+            Streams output to the log viewer by tailing a temporary log file. """
         if self._is_admin():
-            action_func()
-        else:
-            try:
-                # Use sys.argv[0] for robustness (works for .py and frozen .exe)
-                script_path = os.path.abspath(sys.argv[0])
-                # We need to pass the script path and our argument to the new elevated process
-                params = f'"{script_path}" --run-as-admin={action_arg_name}'
-                ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
-                # ShellExecuteW returns a value greater than 32 on success
-                if ret > 32:
-                    self.destroy()  # Close the current non-admin window
-                elif ret == 5:  # SE_ERR_ACCESSDENIED, also returned when the UAC prompt is declined
-                    self.add_log("Administrator rights were not granted. The action was cancelled.", level="WARNING")
-                else:
-                    tkinter.messagebox.showerror("Elevation Failed", f"Could not re-launch with admin rights (error code {ret}).")
-            except Exception as e:
-                tkinter.messagebox.showerror("Elevation Failed", f"Could not re-launch with admin rights: {e}")
-
-    def _run_full_setup(self):
-        if not tkinter.messagebox.askyesno("Confirm Installation", "This will install the MSYS2 environment and download the fishtest worker files.\nThis may take several minutes.\n\nNote: Any existing 'worker' folder in this directory will be deleted and replaced.\n\nContinue?"):
+            self._run_command_in_thread(
+                command,
+                start_message=start_message,
+                end_message=end_message,
+                on_complete=on_complete,
+                on_error=on_error
+            )
             return
 
-        command = f'"{get_asset_path("00_install_winget_msys2_admin.cmd")}"'
-        self._run_command_in_thread(
-            command,
-            start_message="--- Starting MSYS2 Installation ---",
-            end_message="--- MSYS2 Installation finished ---",
-            on_complete=self._install_worker_files,
-            on_error=self._prompt_manual_msys2_install
+        def run():
+            self.is_long_operation_running = True
+            self.after(0, self._update_all_controls_state)
+            status_text = f"Status: {start_message.replace('---', '').strip()}..."
+            self.after(0, lambda: self.status_label.configure(text=status_text))
+            if start_message:
+                self.after(0, self.add_log, start_message)
+
+            temp_dir = tempfile.gettempdir()
+            run_id = f"ft_elevated_{int(time.time() * 1000)}"
+            log_file = os.path.join(temp_dir, f"{run_id}.log")
+            runner_cmd = os.path.join(temp_dir, f"{run_id}.cmd")
+
+            try:
+                with open(runner_cmd, "w", encoding="utf-8") as f:
+                    f.write("@echo off\n")
+                    f.write("chcp 65001 >nul\n")
+                    f.write(f'{command} > "{log_file}" 2>&1\n')
+                    f.write("exit /b %ERRORLEVEL%\n")
+            except Exception as e:
+                self.after(0, self.add_log, f"Failed to prepare elevated task: {e}", "FATAL")
+                if on_error:
+                    self.after(0, on_error)
+                self.is_long_operation_running = False
+                self.after(0, self._update_all_controls_state)
+                return
+
+            sei = SHELLEXECUTEINFOW()
+            sei.cbSize = ctypes.sizeof(SHELLEXECUTEINFOW)
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS
+            sei.lpVerb = "runas"
+            sei.lpFile = runner_cmd
+            sei.lpParameters = None
+            sei.lpDirectory = os.path.abspath(".")
+            sei.nShow = SW_HIDE
+
+            success = ctypes.windll.shell32.ShellExecuteExW(ctypes.byref(sei))
+            if not success or not sei.hProcess:
+                err = ctypes.windll.kernel32.GetLastError()
+                if err == 1223:  # ERROR_CANCELLED (user clicked "No" on UAC)
+                    self.after(0, self.add_log, "Administrator rights were not granted. The action was cancelled.", "WARNING")
+                else:
+                    self.after(0, self.add_log, f"Failed to launch elevated task (Error code {err}).", "ERROR")
+                    if on_error:
+                        self.after(0, on_error)
+                try:
+                    if os.path.exists(runner_cmd): os.remove(runner_cmd)
+                    if os.path.exists(log_file): os.remove(log_file)
+                except OSError:
+                    pass
+                self.is_long_operation_running = False
+                self.after(0, self._update_all_controls_state)
+                return
+
+            h_process = sei.hProcess
+            read_pos = 0
+
+            try:
+                # Poll process execution while tailing output to UI log
+                while True:
+                    wait_res = ctypes.windll.kernel32.WaitForSingleObject(h_process, 100)
+                    if os.path.exists(log_file):
+                        try:
+                            with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
+                                lf.seek(read_pos)
+                                for line in lf:
+                                    stripped = line.strip()
+                                    if stripped:
+                                        self.after(0, self.add_log, stripped, "CMD")
+                                read_pos = lf.tell()
+                        except Exception:
+                            pass
+                    if wait_res != 0x00000102:  # WAIT_TIMEOUT is 0x102
+                        break
+
+                # Final flush
+                if os.path.exists(log_file):
+                    try:
+                        with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
+                            lf.seek(read_pos)
+                            for line in lf:
+                                stripped = line.strip()
+                                if stripped:
+                                    self.after(0, self.add_log, stripped, "CMD")
+                    except Exception:
+                        pass
+
+                exit_code = wintypes.DWORD()
+                ctypes.windll.kernel32.GetExitCodeProcess(h_process, ctypes.byref(exit_code))
+                rc = exit_code.value
+
+                if end_message:
+                    self.after(0, self.add_log, end_message)
+
+                if rc == 0:
+                    if on_complete:
+                        self.after(0, on_complete)
+                else:
+                    self.after(0, self.add_log, f"Elevated process finished with non-zero exit code: {rc}", "ERROR")
+                    if on_error:
+                        self.after(0, on_error)
+
+            finally:
+                ctypes.windll.kernel32.CloseHandle(h_process)
+                try:
+                    if os.path.exists(runner_cmd): os.remove(runner_cmd)
+                    if os.path.exists(log_file): os.remove(log_file)
+                except OSError:
+                    pass
+                self.is_long_operation_running = False
+                self.after(0, self._update_all_controls_state)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _run_full_setup(self):
+        msys2_ready = (
+            os.path.exists(os.path.join(MSYS2_PATH, "msys2_shell.cmd")) and
+            os.path.exists(os.path.join(MSYS2_PATH, "ucrt64", "bin", "python3.exe")) and
+            os.path.exists(os.path.join(MSYS2_PATH, "usr", "bin", "unzip.exe"))
         )
+
+        if msys2_ready:
+            if not tkinter.messagebox.askyesno("Confirm Worker Setup", "MSYS2 environment is already installed.\n\nThis will download and set up the fishtest worker files in this directory.\n\nNote: Any existing 'worker' folder will be deleted and replaced.\n\nContinue?"):
+                return
+            self._install_worker_files()
+        else:
+            if not tkinter.messagebox.askyesno("Confirm Installation", "This will install the MSYS2 environment and download the fishtest worker files.\nThis may take several minutes.\n\nNote: Any existing 'worker' folder in this directory will be deleted and replaced.\n\nContinue?"):
+                return
+
+            command = f'call "{get_asset_path("00_install_winget_msys2_admin.cmd")}"'
+            self._run_elevated_command(
+                command,
+                start_message="--- Starting MSYS2 Installation and Package Setup ---",
+                end_message="--- MSYS2 Installation and Package Setup finished ---",
+                on_complete=self._install_worker_files,
+                on_error=self._prompt_manual_msys2_install
+            )
 
     def _prompt_manual_msys2_install(self):
         self.add_log("Automated MSYS2 installation failed.", level="ERROR")
         self.add_log("To install manually:", level="INFO")
         self.add_log("1. Download the MSYS2 installer from https://www.msys2.org", level="INFO")
-        self.add_log("2. Install it to the DEFAULT directory: C:\\msys64", level="WARNING")
+        self.add_log("2. Install it to the DEFAULT directory: C:\\msys64", level="INFO")
         self.add_log("3. Once installed, click 'Install/Re-Install Worker' again.", level="INFO")
 
         if tkinter.messagebox.askyesno(
@@ -423,8 +564,8 @@ class FishtestManagerApp(ctk.CTk):
         )
 
     def _update_msys2(self):
-        command = f'"{get_asset_path("04_update_msys2.cmd")}"'
-        self._run_command_in_thread(
+        command = f'call "{get_asset_path("04_update_msys2.cmd")}"'
+        self._run_elevated_command(
             command,
             start_message="--- Updating MSYS2 environment ---",
             end_message="--- MSYS2 Update finished ---"
@@ -435,9 +576,9 @@ class FishtestManagerApp(ctk.CTk):
         msys2_uninstaller_exists = os.path.exists(os.path.join(MSYS2_PATH, "uninstall.exe"))
 
         if worker_dir_exists:
-            self._run_with_elevation(self._delete_worker_folder, 'delete_worker')
+            self._delete_worker_folder()
         elif msys2_uninstaller_exists:
-            self._run_with_elevation(self._uninstall_msys2, 'uninstall_msys2')
+            self._uninstall_msys2()
 
     def _delete_worker_folder(self):
         if not tkinter.messagebox.askyesno("Confirm Deletion",
@@ -467,7 +608,7 @@ class FishtestManagerApp(ctk.CTk):
         msys2_uninstaller = os.path.join(MSYS2_PATH, "uninstall.exe")
         command = f'if exist "{msys2_uninstaller}" (echo Uninstalling MSYS2... & start /wait "" "{msys2_uninstaller}" /S) else (echo MSYS2 not found.)'
 
-        self._run_command_in_thread(
+        self._run_elevated_command(
             command,
             start_message="--- Starting MSYS2 Uninstallation ---",
             end_message="--- MSYS2 Uninstallation finished ---"
@@ -783,23 +924,4 @@ if __name__ == "__main__":
     ctk.set_appearance_mode("dark")
     ctk.set_default_color_theme("blue")
     app = FishtestManagerApp()
-
-    # Check for re-launch argument to auto-run an admin action
-    run_action = None
-    for arg in sys.argv:
-        if arg.startswith('--run-as-admin='):
-            run_action = arg.split('=', 1)[1]
-            break
-
-    if run_action:
-        # Defer the action to allow the window to initialize
-        if run_action == 'install':
-            app.after(100, app._run_full_setup)
-        elif run_action == 'update':
-            app.after(100, app._update_msys2)
-        elif run_action == 'delete_worker':
-            app.after(100, app._delete_worker_folder)
-        elif run_action == 'uninstall_msys2':
-            app.after(100, app._uninstall_msys2)
-
     app.mainloop()

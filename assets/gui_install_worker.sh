@@ -1,5 +1,6 @@
 #!/bin/bash
 # NON-INTERACTIVE fishtest worker installer for GUI use
+set -e
 
 # Values from the GUI. They are passed as environment variables, not arguments,
 # so that special characters in them are never interpreted by cmd or bash.
@@ -23,43 +24,43 @@ if ! [[ "$n_cores" =~ ^[0-9]+$ ]]; then
 fi
 echo "Cores: $n_cores"
 
-# 1. Update system and install essential packages
-echo "--- Updating system and installing required packages ---"
-pacman -Syuu --noconfirm
-pacman -S --noconfirm --needed unzip make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python
+ORIG_DIR=$(pwd)
+tmp_dir=""
 
-echo "--- Cleaning package cache to save disk space ---"
-pacman -Scc --noconfirm
+cleanup() {
+    cd "$ORIG_DIR" 2>/dev/null || true
+    if [ -n "$tmp_dir" ] && [ -d "$tmp_dir" ]; then
+        rm -rf "$tmp_dir"
+    fi
+}
+trap cleanup EXIT
 
-# 2. Delete old worker directory to ensure a clean slate
-echo "--- Removing old worker directory if it exists ---"
+# 1. Clean up old worker directory and any leftover temp directories from prior runs
+echo "--- Removing old worker directory and temporary files if they exist ---"
 rm -rf worker
+rm -rf ___* 2>/dev/null || true
 
-# 3. Download and extract the fishtest worker
+# 2. Download and extract the fishtest worker
 echo "--- Downloading and extracting fishtest worker ---"
-tmp_dir=___${RANDOM}
-mkdir ${tmp_dir} && pushd ${tmp_dir} > /dev/null
+tmp_dir="___${RANDOM}"
+mkdir -p "$tmp_dir"
+cd "$tmp_dir"
 wget https://github.com/official-stockfish/fishtest/archive/master.zip
-unzip -q master.zip "fishtest-master/worker/**" # -q for quiet
-pushd fishtest-master/worker > /dev/null
+unzip -q master.zip "fishtest-master/worker/**"
+cd "fishtest-master/worker"
 
-# 4. Setup a virtual environment and install dependencies
+# 3. Setup a virtual environment and install dependencies
 echo "--- Setting up Python virtual environment ---"
 python3 -m venv "env"
 env/bin/python3 -m pip install -q --upgrade pip setuptools wheel
 env/bin/python3 -m pip install -q requests
 
-# 5. Write fishtest.cfg using the worker's own logic
+# 4. Write fishtest.cfg using the worker's own logic
 echo "--- Generating fishtest.cfg ---"
 env/bin/python3 worker.py "$usr_name" "$usr_pwd" --concurrency "$n_cores" --only_config --no_validation
-if [ $? -eq 0 ]; then
-    echo "Successfully created fishtest.cfg"
-else
-    echo "Error: Failed to create fishtest.cfg"
-    exit 1
-fi
+echo "Successfully created fishtest.cfg"
 
-# 6. Create the fishtest.cmd launcher
+# 5. Create the fishtest.cmd launcher
 cat << EOF > fishtest.cmd
 @echo off
 set "HERE=%~dp0"
@@ -68,9 +69,9 @@ cd /d "%HERE%"
 env\\bin\\python3.exe worker.py
 EOF
 
+# 6. Finalize installation
 echo "--- Finalizing installation ---"
-popd > /dev/null && popd > /dev/null
-mv $tmp_dir/fishtest-master/worker .
-rm -rf $tmp_dir
+cd "$ORIG_DIR"
+mv "$tmp_dir/fishtest-master/worker" .
 
 echo "--- Installation complete! ---"
