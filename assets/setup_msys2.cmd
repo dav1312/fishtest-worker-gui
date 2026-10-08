@@ -24,9 +24,8 @@ if %INSTALL_ERR% neq 0 (
 )
 
 :install_packages
-:: The first pass may only update the core packages (pacman, msys2-runtime) and
-:: exit with an error when pacman has to restart, so its result is not checked.
-:: The second pass upgrades everything else.
+:: The first pass may only update core packages and fail when pacman restarts,
+:: so only the second pass, which upgrades the rest, is checked.
 echo Updating MSYS2 core packages...
 call "C:\msys64\msys2_shell.cmd" -defterm -ucrt64 -no-start -here -c "pacman -Syuu --noconfirm"
 

@@ -27,7 +27,7 @@ CONFIG_FILE_NAME = "fishtest.cfg"
 CONFIG_FILE = os.path.join(WORKER_DIR, CONFIG_FILE_NAME)
 EXIT_FILE_NAME = "fish.exit"
 MSYS2_PATH = "C:\\msys64"
-# Files that must exist for MSYS2 and the packages installed by setup_msys2.cmd to be usable
+# Keep in sync with the packages installed by setup_msys2.cmd
 MSYS2_REQUIRED_FILES = (
     "msys2_shell.cmd",
     os.path.join("usr", "bin", "wget.exe"),
@@ -335,10 +335,9 @@ class FishtestManagerApp(ctk.CTk):
         """ Checks GitHub for the latest release in a background thread. """
         url = f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest"
         try:
-            # Create request with User-Agent to avoid some basic filtering
+            # The GitHub API rejects requests without a User-Agent
             req = urllib.request.Request(url, headers={'User-Agent': APP_NAME})
 
-            # 5 second timeout to avoid hanging if network is bad
             with urllib.request.urlopen(req, timeout=5) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode())
@@ -356,7 +355,6 @@ class FishtestManagerApp(ctk.CTk):
 
     def _compare_versions(self, latest_tag):
         def parse_version(v_str):
-            # Remove 'v', split by '.', convert to integers
             try:
                 return tuple(map(int, v_str.lstrip('v').split('.')))
             except ValueError:
@@ -428,8 +426,7 @@ class FishtestManagerApp(ctk.CTk):
             sei.lpDirectory = os.path.abspath(".")
             sei.nShow = SW_HIDE
 
-            # use_last_error makes ctypes save the error right after the call,
-            # before the interpreter can overwrite it
+            # Without use_last_error, the interpreter can overwrite the error code before we read it
             shell32 = ctypes.WinDLL("shell32", use_last_error=True)
             success = shell32.ShellExecuteExW(ctypes.byref(sei))
             if not success or not sei.hProcess:
@@ -453,10 +450,7 @@ class FishtestManagerApp(ctk.CTk):
             read_pos = 0
 
             try:
-                # Poll process execution while tailing output to UI log.
-                # The log is read as bytes and decoded per line like the non-elevated output,
-                # since programs that ignore chcp 65001 write in the OEM code page.
-                # The file is read once more after the process exits, so no output is lost.
+                # Read as bytes: programs that ignore chcp 65001 write in the OEM code page
                 while True:
                     wait_res = ctypes.windll.kernel32.WaitForSingleObject(h_process, 100)
                     if os.path.exists(log_file):
@@ -540,7 +534,6 @@ class FishtestManagerApp(ctk.CTk):
         password = self.config.get('login', 'password')
         cores = self.config.get('parameters', 'concurrency')
 
-        # Convert the path to the install script to an MSYS2-compatible path
         msys2_script_path = windows_to_msys2_path(get_asset_path('setup_worker.sh'))
         # The script is expected to run from the app's root to create the 'worker' sub-directory.
         app_run_dir = os.path.abspath(".")
@@ -632,7 +625,6 @@ class FishtestManagerApp(ctk.CTk):
 
     # --- Worker Start/Stop Logic ---
     def _toggle_worker(self):
-        # Check if the object exists, rather than checking if Windows thinks it's running.
         if self.worker_process is not None:
             self._stop_worker_gracefully()
         else:
@@ -641,7 +633,6 @@ class FishtestManagerApp(ctk.CTk):
     def _start_worker(self):
         self.add_log("Attempting to start the worker...")
 
-        # Clean up fish.exit before starting the process
         exit_file_path = os.path.join(WORKER_DIR, EXIT_FILE_NAME)
         if os.path.exists(exit_file_path):
             try:
@@ -650,7 +641,6 @@ class FishtestManagerApp(ctk.CTk):
             except Exception as e:
                 self.add_log(f"Could not clean up leftover {EXIT_FILE_NAME} file. The worker may not start correctly: {e}", level="ERROR")
 
-        # Reset progress state and make progress bar visible
         self.task_total_games = 0
         self.task_current_games = 0
         self.task_start_time = None
@@ -659,13 +649,8 @@ class FishtestManagerApp(ctk.CTk):
         self.task_progress_label.grid()
         self.task_progress_bar.grid()
 
-        # The worker.py script must run from inside the WORKER_DIR.
-        # The -where argument for msys2_shell.cmd takes a Windows path.
-        # We quote it to handle spaces in the path.
+        # worker.py must run from inside WORKER_DIR, which -where sets as the working directory
         worker_dir_win_path = os.path.abspath(WORKER_DIR)
-
-        # The command to run inside the MSYS2 shell.
-        # Since -where sets the working directory, we don't need 'cd'.
         worker_command = "env/bin/python3 worker.py"
 
         full_command = f'"{os.path.join(MSYS2_PATH, "msys2_shell.cmd")}" -defterm -ucrt64 -no-start -where "{worker_dir_win_path}" -c "{worker_command}"'
@@ -678,8 +663,7 @@ class FishtestManagerApp(ctk.CTk):
                 command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 shell=True, creationflags=subprocess.CREATE_NO_WINDOW
             )
-            self.after(0, self._update_all_controls_state) # Update UI to "Running" state
-            # --- Process each line for progress info ---
+            self.after(0, self._update_all_controls_state)
             for raw_line in iter(self.worker_process.stdout.readline, b''):
                 line = decode_output(raw_line)
                 self.after(0, self._process_worker_output, line.strip())
@@ -691,14 +675,10 @@ class FishtestManagerApp(ctk.CTk):
             self.after(0, self._on_worker_stopped)
 
     def _stop_worker_gracefully(self):
-        # Only return if the object is actually None
-        # If the object exists but is 'dead' (Zombie), we continue anyway.
         if self.worker_process is None:
             return self.add_log("Worker is not running.")
 
-        # If poll() returns a value (is not None), the wrapper process is dead.
-        # But since we are inside this function, self.worker_process is NOT None.
-        # This is the "Zombie" state.
+        # The wrapper process can be dead while the worker itself keeps running
         if self.worker_process.poll() is not None:
             self.add_log("Wrapper process is dead. Attempting to stop the worker.", level="WARNING")
 
@@ -708,18 +688,15 @@ class FishtestManagerApp(ctk.CTk):
             with open(os.path.join(WORKER_DIR, EXIT_FILE_NAME), "w") as f: pass
         except Exception as e:
             self.add_log(f"Could not create {EXIT_FILE_NAME} file: {e}. Consider a force stop (right-click).", level="ERROR")
-            # Re-enable button if file creation fails
             self.worker_button.configure(text="STOP WORKER", state="normal")
 
     def _force_stop_worker_event(self, event):
-        # Check if the object exists, rather than checking if Windows thinks it's running.
         if self.worker_process is not None:
             if tkinter.messagebox.askyesno("Force Stop", "Are you sure you want to force stop the worker? Current game progress may be lost."):
                 self._stop_worker_forcefully()
 
     def _stop_worker_forcefully(self):
-        # Check object existence only.
-        # This ensures we can clean up even if the wrapper process died silently.
+        # Check the object rather than poll(), so we can clean up even if the wrapper process died silently
         if self.worker_process is None:
             return self.add_log("Worker is not running.")
 
@@ -747,15 +724,14 @@ class FishtestManagerApp(ctk.CTk):
     def _on_worker_stopped(self):
         self.add_log("Worker process has stopped.", level="SUCCESS")
         self.worker_process = None
-        # --- Hide progress UI when worker stops ---
         self.task_progress_label.grid_remove()
         self.task_progress_bar.grid_remove()
-        self._update_all_controls_state() # Update UI to "Idle" state
+        self._update_all_controls_state()
 
     # --- Worker progress tracking ---
     def _process_worker_output(self, line):
         """Parses a line from the worker's stdout to update task progress."""
-        self.add_log(line, level="WORKER") # Always log the line with the WORKER tag
+        self.add_log(line, level="WORKER")
 
         # Detect Start/Total Games
         # Pattern: Started game X of Y ...
@@ -782,7 +758,6 @@ class FishtestManagerApp(ctk.CTk):
             self.task_current_games = int(match_progress.group(1))
             self._update_progress_display()
 
-    # --- Update display logic to include ETA ---
     def _update_progress_display(self):
         """Updates the progress bar and label widgets based on current state, including ETA."""
         if self.task_total_games > 0:
@@ -893,20 +868,15 @@ class FishtestManagerApp(ctk.CTk):
 
         timestamp = time.strftime("[%H:%M:%S]")
 
-        # Determine tag and format the level string
         level_str = level.upper()
         tag = level_str
-        # Use a fixed width for the level tag (7 characters)
         padded_level = f"[{level_str:<7}]"
 
-        # Insert timestamp
         self.log_text.insert(ctk.END, timestamp + " ", "TIMESTAMP")
 
-        # Insert level tag
         self.log_text.insert(ctk.END, padded_level, tag)
         self.log_text.insert(ctk.END, " ")
 
-        # Insert message
         self.log_text.insert(ctk.END, message + '\n')
 
         self.log_text.configure(state='disabled')
