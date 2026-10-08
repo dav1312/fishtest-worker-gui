@@ -24,8 +24,18 @@ if %INSTALL_ERR% neq 0 (
 )
 
 :install_packages
-echo Updating MSYS2 system packages...
+:: The first pass may only update the core packages (pacman, msys2-runtime) and
+:: exit with an error when pacman has to restart, so its result is not checked.
+:: The second pass upgrades everything else.
+echo Updating MSYS2 core packages...
 call "C:\msys64\msys2_shell.cmd" -defterm -ucrt64 -no-start -here -c "pacman -Syuu --noconfirm"
+
+echo Updating remaining MSYS2 packages...
+call "C:\msys64\msys2_shell.cmd" -defterm -ucrt64 -no-start -here -c "pacman -Syuu --noconfirm"
+if errorlevel 1 (
+    echo Error: Failed to update MSYS2 packages.
+    exit /b 1
+)
 
 echo Installing required development tools and packages (unzip, make, gcc, python)...
 call "C:\msys64\msys2_shell.cmd" -defterm -ucrt64 -no-start -here -c "pacman -S --noconfirm --needed wget unzip make mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-python && pacman -Scc --noconfirm"
