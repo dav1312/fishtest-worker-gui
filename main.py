@@ -623,8 +623,7 @@ class FishtestManagerApp(ctk.CTk):
                                            icon='warning'):
             return
 
-        msys2_uninstaller = os.path.join(MSYS2_PATH, "uninstall.exe")
-        command = f'if exist "{msys2_uninstaller}" (echo Uninstalling MSYS2... & start /B /wait "" "{msys2_uninstaller}" pr --confirm-command) else (echo MSYS2 not found.)'
+        command = f'call "{get_asset_path("uninstall_msys2.cmd")}"'
 
         self._run_elevated_command(
             command,
