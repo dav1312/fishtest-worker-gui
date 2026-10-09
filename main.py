@@ -237,7 +237,7 @@ class FishtestManagerApp(ctk.CTk):
 
     def _setup_window(self):
         self.title(f"{APP_NAME} ({APP_VERSION})")
-        self.geometry("920x650")
+        self.geometry("930x650")
         self.minsize(780, 520)
         self.configure(fg_color=COLOR_BG)
         self.grid_columnconfigure(1, weight=1)
