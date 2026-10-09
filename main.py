@@ -320,7 +320,9 @@ class FishtestManagerApp(ctk.CTk):
         self.task_progress_label.grid_remove()
         self.task_progress_bar.grid_remove()
 
-        self.worker_button = ctk.CTkButton(card, text="START WORKER", command=self._toggle_worker, width=170, height=44, corner_radius=6,
+        can_start = is_msys2_ready() and os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
+        button_text = "START WORKER" if can_start else "INSTALL WORKER"
+        self.worker_button = ctk.CTkButton(card, text=button_text, command=self._toggle_worker, width=170, height=44, corner_radius=6,
                                            font=("Arial", 14, "bold"), fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
         self.worker_button.grid(row=0, column=1, padx=(10, 18), pady=16)
         self.worker_button.bind("<Button-3>", self._force_stop_worker_event) # Right-click to force stop
@@ -440,6 +442,7 @@ class FishtestManagerApp(ctk.CTk):
         if token != self._settings_token:
             self._save_github_token(token)
         self._show_view("dashboard")
+        self._update_all_controls_state()
 
     def _set_state(self, text, kind="idle"):
         """ Updates the state line of the control card. kind is one of idle, running, busy. """
@@ -483,11 +486,11 @@ class FishtestManagerApp(ctk.CTk):
         worker_installed = os.path.exists(os.path.join(WORKER_DIR, "worker.py"))
 
         if not msys2_installed:
-            self.add_log("MSYS2 not found. Please run 'Install/Re-Install Worker'.")
+            self.add_log("MSYS2 not found. Click 'INSTALL WORKER' to install the worker.", level="WARNING")
         elif not is_msys2_ready():
-            self.add_log("MSYS2 found, but required packages are missing. Run 'Install/Re-Install Worker' to install them.")
+            self.add_log("MSYS2 found, but required packages are missing. Click 'INSTALL WORKER' to install them.", level="WARNING")
         elif not worker_installed:
-            self.add_log("MSYS2 found, but worker files are missing. Run 'Install/Re-Install Worker' to set them up.")
+            self.add_log("MSYS2 found, but worker files are missing. Click 'INSTALL WORKER' to set them up.", level="WARNING")
         else:
             self.add_log("Full environment setup is complete.", level="SUCCESS")
             user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
@@ -539,9 +542,15 @@ class FishtestManagerApp(ctk.CTk):
         self.setup_button.configure(state='normal')
         self.settings_button.configure(state='normal')
         self.update_button.configure(state='normal' if msys2_installed else 'disabled')
-        can_start = worker_installed and is_msys2_ready()
-        self.worker_button.configure(state='normal' if can_start else 'disabled', text="START WORKER",
-                                     fg_color=COLOR_ACCENT if can_start else COLOR_ACCENT_DISABLED, hover_color=COLOR_ACCENT_HOVER)
+        is_ready = worker_installed and is_msys2_ready()
+
+        if is_ready:
+            user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
+            password = self.config.get('login', 'password', fallback='')
+            has_credentials = not (user == USERNAME_DEFAULT or not user or not password)
+            self.worker_button.configure(state='normal' if has_credentials else 'disabled', text="START WORKER", fg_color=COLOR_ACCENT if has_credentials else COLOR_ACCENT_DISABLED, hover_color=COLOR_ACCENT_HOVER)
+        else:
+            self.worker_button.configure(state='normal', text="INSTALL WORKER", fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
 
         if worker_dir_exists:
             self.uninstall_button.configure(text="Delete Worker Folder", state='normal')
@@ -848,8 +857,10 @@ class FishtestManagerApp(ctk.CTk):
                 self._confirm_and_force_stop()
             else:
                 self._stop_worker_gracefully()
-        else:
+        elif is_msys2_ready() and os.path.exists(os.path.join(WORKER_DIR, "worker.py")):
             self._start_worker()
+        else:
+            self._run_full_setup()
 
     def _start_worker(self):
         self.add_log("Attempting to start the worker...")
