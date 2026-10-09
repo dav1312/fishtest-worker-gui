@@ -62,6 +62,8 @@ COLOR_ACCENT_TEXT = "#6FD39A"
 COLOR_DANGER = "#E5484D"
 COLOR_DANGER_HOVER = "#C93C41"
 COLOR_DANGER_TEXT = "#FF7A80"
+COLOR_BLUE = "#2563EB"
+COLOR_BLUE_HOVER = "#1D4ED8"
 COLOR_STATE = {"idle": "#7E8798", "running": "#4ADE80", "busy": "#E0A93B"}
 
 SEE_MASK_NOCLOSEPROCESS = 0x00000040
@@ -567,7 +569,10 @@ class FishtestManagerApp(ctk.CTk):
             user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
             password = self.config.get('login', 'password', fallback='')
             has_credentials = not (user == USERNAME_DEFAULT or not user or not password)
-            self.worker_button.configure(state='normal' if has_credentials else 'disabled', text="START WORKER", fg_color=COLOR_ACCENT if has_credentials else COLOR_ACCENT_DISABLED, hover_color=COLOR_ACCENT_HOVER)
+            if has_credentials:
+                self.worker_button.configure(state='normal', text="START WORKER", fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
+            else:
+                self.worker_button.configure(state='normal', text="SETTINGS", fg_color=COLOR_BLUE, hover_color=COLOR_BLUE_HOVER)
         else:
             self.worker_button.configure(state='normal', text="INSTALL WORKER", fg_color=COLOR_ACCENT, hover_color=COLOR_ACCENT_HOVER)
 
@@ -873,7 +878,13 @@ class FishtestManagerApp(ctk.CTk):
             else:
                 self._stop_worker_gracefully()
         elif is_msys2_ready() and os.path.exists(os.path.join(WORKER_DIR, "worker.py")):
-            self._start_worker()
+
+            user = self.config.get('login', 'username', fallback=USERNAME_DEFAULT)
+            password = self.config.get('login', 'password', fallback='')
+            if user == USERNAME_DEFAULT or not user or not password:
+                self._show_settings()
+            else:
+                self._start_worker()
         else:
             self._run_full_setup()
 
