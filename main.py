@@ -754,8 +754,8 @@ class FishtestManagerApp(ctk.CTk):
             command = f'call "{get_asset_path("setup_msys2.cmd")}"'
             self._run_elevated_command(
                 command,
-                start_message="Starting MSYS2 Installation and Package Setup",
-                end_message="MSYS2 Installation and Package Setup finished",
+                start_message="Installing MSYS2 and required packages",
+                end_message="MSYS2 installation and package setup finished",
                 on_complete=self._install_worker_files,
                 on_error=self._prompt_manual_msys2_install
             )
@@ -812,7 +812,7 @@ class FishtestManagerApp(ctk.CTk):
         self._run_elevated_command(
             command,
             start_message="Updating MSYS2 environment",
-            end_message="MSYS2 Update finished"
+            end_message="MSYS2 update finished"
         )
 
     def _handle_uninstall_click(self):
@@ -854,7 +854,7 @@ class FishtestManagerApp(ctk.CTk):
         self._run_elevated_command(
             command,
             start_message="Uninstalling MSYS2, this may take a few minutes",
-            end_message="MSYS2 Uninstallation finished"
+            end_message="MSYS2 uninstallation finished"
         )
 
     def _save_github_token(self, token):
@@ -904,13 +904,13 @@ class FishtestManagerApp(ctk.CTk):
         self.task_current_games = 0
         self.task_start_time = None
         self.task_progress_bar.set(0)
-        self.task_progress_label.configure(text="")
+        self.task_progress_label.configure(text="Starting worker...")
         self.task_progress_label.grid()
         self.task_progress_bar.grid()
 
         # worker.py must run from inside WORKER_DIR, which -where sets as the working directory
         worker_dir_win_path = os.path.abspath(WORKER_DIR)
-        worker_command = "env/bin/python3 worker.py"
+        worker_command = "env/bin/python3 -u worker.py"
 
         full_command = f'"{os.path.join(MSYS2_PATH, "msys2_shell.cmd")}" -defterm -ucrt64 -no-start -where "{worker_dir_win_path}" -c "{worker_command}"'
 
@@ -1027,6 +1027,26 @@ class FishtestManagerApp(ctk.CTk):
         if match_progress:
             self.task_current_games = int(match_progress.group(1))
             self._update_progress_display()
+            return
+
+        # If games haven't started yet, display the active preparation step
+        if self.task_total_games == 0:
+            if "Running tests" in line or "[doctest]" in line:
+                self.task_progress_label.configure(text="Running fastchess tests...")
+            elif "Building fastchess" in line or line == "Building..":
+                self.task_progress_label.configure(text="Building fastchess...")
+            elif "Step 1/4" in line:
+                self.task_progress_label.configure(text="Compiling Stockfish (1/4: instrumented)...")
+            elif "Step 2/4" in line:
+                self.task_progress_label.configure(text="Profiling Stockfish (2/4: benchmark)...")
+            elif "Step 3/4" in line:
+                self.task_progress_label.configure(text="Compiling Stockfish (3/4: optimized)...")
+            elif "Running bench" in line or "Warmup for bench" in line:
+                self.task_progress_label.configure(text="Calibrating engine speed (bench)...")
+            elif line.startswith("Downloading"):
+                self.task_progress_label.configure(text="Downloading task files...")
+            elif line.startswith("Fetching task"):
+                self.task_progress_label.configure(text="Fetching task from server...")
 
     def _update_progress_display(self):
         """Updates the progress bar and label widgets based on current state, including ETA."""
