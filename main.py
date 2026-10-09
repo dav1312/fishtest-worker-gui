@@ -191,7 +191,7 @@ class FishtestManagerApp(ctk.CTk):
         super().__init__()
 
         self.worker_process = None
-        self.is_long_operation_running = False
+        self.active_long_operations = 0
         self.is_stopping_gracefully = False
         # Same settings as the worker's own parser: '%' is a literal character and ';' starts an inline comment
         self.config = configparser.ConfigParser(inline_comment_prefixes=";", interpolation=None)
@@ -209,6 +209,25 @@ class FishtestManagerApp(ctk.CTk):
         self.after(2000, lambda: threading.Thread(target=self._check_latest_version_thread, daemon=True).start())
 
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
+
+    @property
+    def is_long_operation_running(self):
+        return self.active_long_operations > 0
+
+    def _start_long_operation(self, start_message=""):
+        self.active_long_operations += 1
+        self._update_all_controls_state()
+        if start_message:
+            self._set_state(f"{start_message}...", "busy")
+            self.add_log(start_message)
+        else:
+            self._set_state("Working...", "busy")
+
+    def _finish_long_operation(self, end_message=""):
+        if end_message:
+            self.add_log(end_message)
+        self.active_long_operations = max(0, self.active_long_operations - 1)
+        self._update_all_controls_state()
 
     def _is_admin(self):
         try:
@@ -619,13 +638,9 @@ class FishtestManagerApp(ctk.CTk):
             )
             return
 
-        def run():
-            self.is_long_operation_running = True
-            self.after(0, self._update_all_controls_state)
-            self.after(0, self._set_state, f"{start_message}..." if start_message else "Working...", "busy")
-            if start_message:
-                self.after(0, self.add_log, start_message)
+        self._start_long_operation(start_message)
 
+        def run():
             temp_dir = tempfile.gettempdir()
             run_id = f"ft_elevated_{int(time.time() * 1000)}"
             log_file = os.path.join(temp_dir, f"{run_id}.log")
@@ -641,8 +656,7 @@ class FishtestManagerApp(ctk.CTk):
                 self.after(0, self.add_log, f"Failed to prepare elevated task: {e}", "FATAL")
                 if on_error:
                     self.after(0, on_error)
-                self.is_long_operation_running = False
-                self.after(0, self._update_all_controls_state)
+                self.after(0, self._finish_long_operation)
                 return
 
             sei = SHELLEXECUTEINFOW()
@@ -670,8 +684,7 @@ class FishtestManagerApp(ctk.CTk):
                     if os.path.exists(log_file): os.remove(log_file)
                 except OSError:
                     pass
-                self.is_long_operation_running = False
-                self.after(0, self._update_all_controls_state)
+                self.after(0, self._finish_long_operation)
                 return
 
             h_process = sei.hProcess
@@ -699,17 +712,21 @@ class FishtestManagerApp(ctk.CTk):
                 ctypes.windll.kernel32.GetExitCodeProcess(h_process, ctypes.byref(exit_code))
                 rc = exit_code.value
 
-                if end_message:
-                    self.after(0, self.add_log, end_message)
-
                 if rc == 0:
                     if on_complete:
                         self.after(0, on_complete)
+                    self.after(0, lambda msg=end_message: self._finish_long_operation(msg))
                 else:
                     self.after(0, self.add_log, f"Elevated process finished with non-zero exit code: {rc}", "ERROR")
                     if on_error:
                         self.after(0, on_error)
+                    self.after(0, self._finish_long_operation)
 
+            except Exception as e:
+                self.after(0, self.add_log, f"Error during elevated process execution: {e}", "FATAL")
+                if on_error:
+                    self.after(0, on_error)
+                self.after(0, self._finish_long_operation)
             finally:
                 ctypes.windll.kernel32.CloseHandle(h_process)
                 try:
@@ -717,8 +734,6 @@ class FishtestManagerApp(ctk.CTk):
                     if os.path.exists(log_file): os.remove(log_file)
                 except OSError:
                     pass
-                self.is_long_operation_running = False
-                self.after(0, self._update_all_controls_state)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -1039,11 +1054,9 @@ class FishtestManagerApp(ctk.CTk):
 
     # --- Threading and Utilities ---
     def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None, on_error=None, env=None):
+        self._start_long_operation(start_message)
+
         def run():
-            self.is_long_operation_running = True
-            self.after(0, self._update_all_controls_state)
-            self.after(0, self._set_state, f"{start_message}..." if start_message else "Working...", "busy")
-            if start_message: self.after(0, self.add_log, start_message)
             try:
                 process = subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1053,18 +1066,21 @@ class FishtestManagerApp(ctk.CTk):
                     line = decode_output(raw_line)
                     self.after(0, self.add_log, line.strip(), "CMD")
                 rc = process.wait()
-                if end_message: self.after(0, self.add_log, end_message)
                 if rc == 0:
-                    if on_complete: self.after(0, on_complete)
+                    if on_complete:
+                        self.after(0, on_complete)
+                    self.after(0, lambda msg=end_message: self._finish_long_operation(msg))
                 else:
                     self.after(0, self.add_log, f"Process finished with non-zero exit code: {rc}", "ERROR")
-                    if on_error: self.after(0, on_error)
+                    if on_error:
+                        self.after(0, on_error)
+                    self.after(0, self._finish_long_operation)
             except Exception as e:
                 self.after(0, self.add_log, f"executing command: {e}", "FATAL")
-                if on_error: self.after(0, on_error)
-            finally:
-                self.is_long_operation_running = False
-                self.after(0, self._update_all_controls_state)
+                if on_error:
+                    self.after(0, on_error)
+                self.after(0, self._finish_long_operation)
+
         threading.Thread(target=run, daemon=True).start()
 
     def add_log(self, message, level="INFO"):
