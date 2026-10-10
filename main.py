@@ -900,11 +900,7 @@ class FishtestManagerApp(ctk.CTk):
             except Exception as e:
                 self.add_log(f"Could not clean up leftover {EXIT_FILE_NAME} file. The worker may not start correctly: {e}", level="ERROR")
 
-        self.task_total_games = 0
-        self.task_current_games = 0
-        self.task_start_time = None
-        self.task_progress_bar.set(0)
-        self.task_progress_label.configure(text="Starting worker...")
+        self._reset_task_state("Starting worker...")
         self.task_progress_label.grid()
         self.task_progress_bar.grid()
 
@@ -994,14 +990,60 @@ class FishtestManagerApp(ctk.CTk):
         self.add_log("Worker process has stopped.", level="SUCCESS")
         self.worker_process = None
         self.is_stopping_gracefully = False
+        self._reset_task_state()
         self.task_progress_label.grid_remove()
         self.task_progress_bar.grid_remove()
         self._update_all_controls_state()
 
     # --- Worker progress tracking ---
+    def _reset_task_state(self, message=""):
+        """Resets task game counters and timer for transitions between tasks."""
+        self.task_total_games = 0
+        self.task_current_games = 0
+        self.task_start_time = None
+        self.task_progress_bar.set(0)
+        if message:
+            self.task_progress_label.configure(text=message)
+
     def _process_worker_output(self, line):
         """Parses a line from the worker's stdout to update task progress."""
         self.add_log(line, level="WORKER")
+
+        # Detect Task Completion
+        if line.startswith("Task exited"):
+            self._reset_task_state("Task completed. Waiting for next task...")
+            return
+
+        # Detect Task Termination from Server
+        if "no more games are needed for the current task" in line:
+            if self.task_total_games > 0:
+                status = "(Finished)" if self.task_current_games >= self.task_total_games else "(Finished early)"
+                self.task_progress_label.configure(
+                    text=f"Task Progress: {self.task_current_games} / {self.task_total_games} {status}"
+                )
+            return
+
+        # Detect Teardown / Upload Steps
+        if "Waiting for fastchess to finish" in line:
+            self.task_progress_label.configure(text="Finalizing games...")
+            return
+        if "Uploading compressed PGN" in line:
+            self.task_progress_label.configure(text="Uploading game results...")
+            return
+
+        # Detect Task Fetching & Idle States
+        if line.startswith("Fetching task"):
+            self._reset_task_state("Fetching task from server...")
+            return
+        if "No tasks available at this time" in line:
+            self._reset_task_state("No tasks available. Waiting...")
+            return
+
+        # Detect Task Assignment
+        match_task = re.search(r"^Working on task (\d+)", line)
+        if match_task:
+            self._reset_task_state(f"Task {match_task.group(1)} acquired. Preparing...")
+            return
 
         # Detect Start/Total Games
         # Pattern: Started game X of Y ...
@@ -1035,18 +1077,16 @@ class FishtestManagerApp(ctk.CTk):
                 self.task_progress_label.configure(text="Running fastchess tests...")
             elif "Building fastchess" in line or line == "Building..":
                 self.task_progress_label.configure(text="Building fastchess...")
-            elif "Step 1/4" in line:
-                self.task_progress_label.configure(text="Compiling Stockfish (1/4: instrumented)...")
-            elif "Step 2/4" in line:
-                self.task_progress_label.configure(text="Profiling Stockfish (2/4: benchmark)...")
-            elif "Step 3/4" in line:
-                self.task_progress_label.configure(text="Compiling Stockfish (3/4: optimized)...")
+            elif any(step in line for step in ("Step 1/4", "Step 2/4", "Step 3/4", "Step 4/4")):
+                self.task_progress_label.configure(text="Compiling Stockfish...")
+            elif "Computing engine signature" in line:
+                self.task_progress_label.configure(text="Computing engine signature...")
             elif "Running bench" in line or "Warmup for bench" in line:
-                self.task_progress_label.configure(text="Calibrating engine speed (bench)...")
+                self.task_progress_label.configure(text="Calibrating engine speed...")
+            elif "Indexing opening suite" in line:
+                self.task_progress_label.configure(text="Indexing opening suite...")
             elif line.startswith("Downloading"):
                 self.task_progress_label.configure(text="Downloading task files...")
-            elif line.startswith("Fetching task"):
-                self.task_progress_label.configure(text="Fetching task from server...")
 
     def _update_progress_display(self):
         """Updates the progress bar and label widgets based on current state, including ETA."""
@@ -1079,9 +1119,7 @@ class FishtestManagerApp(ctk.CTk):
 
             self.task_progress_label.configure(text=base_text + eta_text)
         else:
-            # This case is handled when the worker starts, but good to have
             self.task_progress_bar.set(0)
-            self.task_progress_label.configure(text="")
 
     # --- Threading and Utilities ---
     def _run_command_in_thread(self, command, start_message="", end_message="", on_complete=None, on_error=None, env=None):
