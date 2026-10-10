@@ -18,7 +18,7 @@ import tempfile
 
 # --- Constants ---
 APP_NAME = "Fishtest Worker Manager"
-APP_VERSION = "v1.1.1"
+APP_VERSION = "v2.0.0"
 REPO_OWNER = "dav1312"
 REPO_NAME = "fishtest-worker-gui"
 
